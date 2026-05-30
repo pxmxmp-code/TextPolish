@@ -4,19 +4,28 @@ on:
   push:
     tags:
       - 'v[0-9]+.[0-9]+.[0-9]+'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: '要打包并发布的版本标签，例如 v2.1.0'
+        required: true
+        type: string
 
 env:
   PYTHON_VERSION: '3.13'
+  RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
 
 jobs:
   package-windows:
     runs-on: windows-latest
     permissions:
-      contents: read
+      contents: write
 
     steps:
     - name: 检出代码
       uses: actions/checkout@v4
+      with:
+        ref: ${{ env.RELEASE_TAG }}
       
     - name: 安装Python
       uses: actions/setup-python@v4
@@ -30,7 +39,15 @@ jobs:
         
     - name: 安装项目依赖
       run: |
-        uv sync
+        uv sync --frozen
+
+    - name: 验证版本标签
+      run: |
+        if ("${{ env.RELEASE_TAG }}" -notmatch "^v[0-9]+\.[0-9]+\.[0-9]+$") {
+          Write-Host "❌ 版本标签格式错误: ${{ env.RELEASE_TAG }}"
+          Write-Host "标签必须形如 v2.1.0"
+          exit 1
+        }
         
     - name: 构建exe文件
       run: |
@@ -53,11 +70,32 @@ jobs:
           Write-Host "❌ 构建失败！未找到exe文件"
           exit 1
         }
+
+        Copy-Item "dist/TextPolish.exe" "dist/TextPolish-${{ env.RELEASE_TAG }}-Windows.exe" -Force
         
     - name: 上传构建产物
       uses: actions/upload-artifact@v4
       with:
-        name: TextPolish-${{ github.ref_name }}-Windows
-        path: dist/TextPolish.exe
+        name: TextPolish-${{ env.RELEASE_TAG }}-Windows
+        path: dist/TextPolish-${{ env.RELEASE_TAG }}-Windows.exe
         if-no-files-found: error
         retention-days: 30
+
+    - name: 创建或更新GitHub Release
+      env:
+        GH_TOKEN: ${{ github.token }}
+      run: |
+        $tag = "${{ env.RELEASE_TAG }}"
+        $asset = "dist/TextPolish-$tag-Windows.exe"
+        $title = "TextPolish $tag"
+
+        gh release view $tag *> $null
+        $releaseExists = $LASTEXITCODE -eq 0
+
+        if ($releaseExists) {
+          Write-Host "Release $tag 已存在，更新安装包..."
+          gh release upload $tag $asset --clobber
+        } else {
+          Write-Host "创建 Release $tag ..."
+          gh release create $tag $asset --title $title --generate-notes
+        }

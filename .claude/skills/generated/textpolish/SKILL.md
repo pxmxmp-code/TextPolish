@@ -1,24 +1,24 @@
 ---
 name: textpolish
-description: "Skill for the Textpolish area of TextPolish. 33 symbols across 5 files."
+description: "Skill for the Textpolish area of TextPolish. 40 symbols across 5 files."
 ---
 
 # Textpolish
 
-33 symbols | 5 files | Cohesion: 80%
+40 symbols | 5 files | Cohesion: 83%
 
 ## When to Use
 
 - Working with code in `src/`
-- Understanding how main, update_style, update_patterns work
+- Understanding how main, load_config, import_config_from_file work
 - Modifying textpolish-related functionality
 
 ## Key Files
 
 | File | Symbols |
 |------|---------|
-| `src/textpolish/config.py` | update_style, update_patterns, add_pattern, remove_pattern, toggle_pattern (+11) |
-| `src/textpolish/core/html_generator.py` | convert_to_html, _process_line, _is_title_level, _process_special_format, _generate_special_format_html (+4) |
+| `src/textpolish/config.py` | __init__, _default_recognition_rules, _coerce_recognition_rule, _load_recognition_rules_data, _migrate_legacy_patterns_to_rules (+18) |
+| `src/textpolish/core/html_generator.py` | convert_to_html, _process_line, _is_title_level, _process_special_format, _wrap_numbers_with_western_font (+4) |
 | `src/textpolish/app.py` | create_application, create_main_window, run, main |
 | `src/textpolish/ui/config_interface.py` | import_config, refresh_all_configs, export_config |
 | `src/textpolish/utils/icon.py` | set_app_icon |
@@ -28,50 +28,50 @@ description: "Skill for the Textpolish area of TextPolish. 33 symbols across 5 f
 Start here when exploring this area:
 
 - **`main`** (Function) — `src/textpolish/app.py:76`
-- **`update_style`** (Method) — `src/textpolish/config.py:288`
-- **`update_patterns`** (Method) — `src/textpolish/config.py:294`
-- **`add_pattern`** (Method) — `src/textpolish/config.py:309`
-- **`remove_pattern`** (Method) — `src/textpolish/config.py:315`
+- **`load_config`** (Method) — `src/textpolish/config.py:525`
+- **`import_config_from_file`** (Method) — `src/textpolish/config.py:712`
+- **`initialize_from_project_config`** (Method) — `src/textpolish/config.py:744`
+- **`load_from_app_config`** (Method) — `src/textpolish/config.py:762`
 
 ## Key Symbols
 
 | Symbol | Type | File | Line |
 |--------|------|------|------|
 | `main` | Function | `src/textpolish/app.py` | 76 |
-| `update_style` | Method | `src/textpolish/config.py` | 288 |
-| `update_patterns` | Method | `src/textpolish/config.py` | 294 |
-| `add_pattern` | Method | `src/textpolish/config.py` | 309 |
-| `remove_pattern` | Method | `src/textpolish/config.py` | 315 |
-| `toggle_pattern` | Method | `src/textpolish/config.py` | 321 |
-| `save_config` | Method | `src/textpolish/config.py` | 328 |
-| `get_enabled_patterns` | Method | `src/textpolish/config.py` | 390 |
-| `convert_to_html` | Method | `src/textpolish/core/html_generator.py` | 18 |
-| `create_application` | Method | `src/textpolish/app.py` | 16 |
-| `create_main_window` | Method | `src/textpolish/app.py` | 43 |
-| `run` | Method | `src/textpolish/app.py` | 53 |
-| `set_app_icon` | Method | `src/textpolish/utils/icon.py` | 55 |
-| `load_config` | Method | `src/textpolish/config.py` | 354 |
-| `reset_to_default` | Method | `src/textpolish/config.py` | 385 |
-| `load_from_app_config` | Method | `src/textpolish/config.py` | 504 |
-| `get_style_dict` | Method | `src/textpolish/config.py` | 397 |
-| `import_config_from_file` | Method | `src/textpolish/config.py` | 460 |
-| `initialize_from_project_config` | Method | `src/textpolish/config.py` | 486 |
-| `import_config` | Method | `src/textpolish/ui/config_interface.py` | 1109 |
+| `load_config` | Method | `src/textpolish/config.py` | 525 |
+| `import_config_from_file` | Method | `src/textpolish/config.py` | 712 |
+| `initialize_from_project_config` | Method | `src/textpolish/config.py` | 744 |
+| `load_from_app_config` | Method | `src/textpolish/config.py` | 762 |
+| `import_config` | Method | `src/textpolish/ui/config_interface.py` | 1932 |
+| `refresh_all_configs` | Method | `src/textpolish/ui/config_interface.py` | 1979 |
+| `update_style` | Method | `src/textpolish/config.py` | 464 |
+| `update_patterns` | Method | `src/textpolish/config.py` | 470 |
+| `add_pattern` | Method | `src/textpolish/config.py` | 485 |
+| `remove_pattern` | Method | `src/textpolish/config.py` | 491 |
+| `toggle_pattern` | Method | `src/textpolish/config.py` | 497 |
+| `save_config` | Method | `src/textpolish/config.py` | 504 |
+| `reset_to_default` | Method | `src/textpolish/config.py` | 564 |
+| `export_config_to_file` | Method | `src/textpolish/config.py` | 699 |
+| `export_config` | Method | `src/textpolish/ui/config_interface.py` | 1897 |
+| `get_enabled_patterns` | Method | `src/textpolish/config.py` | 569 |
+| `classify_line` | Method | `src/textpolish/config.py` | 627 |
+| `convert_to_html` | Method | `src/textpolish/core/html_generator.py` | 21 |
+| `get_style_dict` | Method | `src/textpolish/config.py` | 654 |
 
 ## Execution Flows
 
 | Flow | Type | Steps |
 |------|------|-------|
-| `__init__ → Save_config` | cross_community | 8 |
-| `Add_rule → Save_config` | cross_community | 6 |
+| `Load_config → _serialize_config` | cross_community | 6 |
+| `Load_config → _match_recognition_rule` | cross_community | 6 |
 | `Main → Get_icon_path` | cross_community | 6 |
-| `On_rule_changed → Save_config` | cross_community | 4 |
-| `__init__ → Load_from_app_config` | intra_community | 4 |
-| `Convert_to_html → Get_enabled_patterns` | intra_community | 4 |
-| `Convert_to_html → Get_style_dict` | cross_community | 4 |
-| `Convert_to_html → _wrap_numbers_with_western_font` | cross_community | 4 |
-| `Reset_to_default → Load_from_app_config` | intra_community | 3 |
-| `Import_config → Save_config` | cross_community | 3 |
+| `Reset_to_default → _default_recognition_rules` | cross_community | 5 |
+| `Reset_to_default → _coerce_recognition_rule` | cross_community | 5 |
+| `__init__ → _default_recognition_rules` | intra_community | 5 |
+| `__init__ → _coerce_recognition_rule` | intra_community | 5 |
+| `Import_config → _default_recognition_rules` | intra_community | 4 |
+| `Import_config → _coerce_recognition_rule` | intra_community | 4 |
+| `Import_config → _serialize_config` | cross_community | 4 |
 
 ## Connected Areas
 

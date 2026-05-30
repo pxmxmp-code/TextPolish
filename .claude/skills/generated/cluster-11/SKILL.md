@@ -1,9 +1,9 @@
 ---
-name: cluster-13
-description: "Skill for the Cluster_13 area of TextPolish. 6 symbols across 1 files."
+name: cluster-11
+description: "Skill for the Cluster_11 area of TextPolish. 6 symbols across 1 files."
 ---
 
-# Cluster_13
+# Cluster_11
 
 6 symbols | 1 files | Cohesion: 100%
 
@@ -11,7 +11,7 @@ description: "Skill for the Cluster_13 area of TextPolish. 6 symbols across 1 fi
 
 - Working with code in `src/`
 - Understanding how clean_text work
-- Modifying cluster_13-related functionality
+- Modifying cluster_11-related functionality
 
 ## Key Files
 
@@ -33,11 +33,11 @@ Start here when exploring this area:
 | `_remove_special_symbols` | Method | `src/textpolish/core/text_processor.py` | 48 |
 | `_replace_punctuation` | Method | `src/textpolish/core/text_processor.py` | 59 |
 | `_process_quotes` | Method | `src/textpolish/core/text_processor.py` | 75 |
-| `_clean_whitespace` | Method | `src/textpolish/core/text_processor.py` | 83 |
-| `_clean_paragraphs` | Method | `src/textpolish/core/text_processor.py` | 95 |
+| `_clean_whitespace` | Method | `src/textpolish/core/text_processor.py` | 134 |
+| `_clean_paragraphs` | Method | `src/textpolish/core/text_processor.py` | 146 |
 
 ## How to Explore
 
 1. `gitnexus_context({name: "clean_text"})` — see callers and callees
-2. `gitnexus_query({query: "cluster_13"})` — find related execution flows
+2. `gitnexus_query({query: "cluster_11"})` — find related execution flows
 3. Read key files listed above for implementation details

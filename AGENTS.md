@@ -1,7 +1,7 @@
 <!-- gitnexus:start -->
 # GitNexus — Code Intelligence
 
-This project is indexed by GitNexus as **TextPolish** (538 symbols, 965 relationships, 32 execution flows). Use the GitNexus MCP tools to understand code, assess impact, and navigate safely.
+This project is indexed by GitNexus as **TextPolish** (682 symbols, 1380 relationships, 55 execution flows). Use the GitNexus MCP tools to understand code, assess impact, and navigate safely.
 
 > If any GitNexus tool warns the index is stale, run `npx gitnexus analyze` in terminal first.
 
@@ -39,9 +39,9 @@ This project is indexed by GitNexus as **TextPolish** (538 symbols, 965 relation
 | Rename / extract / split / refactor | `.claude/skills/gitnexus/gitnexus-refactoring/SKILL.md` |
 | Tools, resources, schema reference | `.claude/skills/gitnexus/gitnexus-guide/SKILL.md` |
 | Index, status, clean, wiki CLI commands | `.claude/skills/gitnexus/gitnexus-cli/SKILL.md` |
-| Work in the Ui area (49 symbols) | `.claude/skills/generated/ui/SKILL.md` |
-| Work in the Textpolish area (33 symbols) | `.claude/skills/generated/textpolish/SKILL.md` |
-| Work in the Scripts area (8 symbols) | `.claude/skills/generated/scripts/SKILL.md` |
-| Work in the Cluster_13 area (6 symbols) | `.claude/skills/generated/cluster-13/SKILL.md` |
+| Work in the Ui area (87 symbols) | `.claude/skills/generated/ui/SKILL.md` |
+| Work in the Textpolish area (40 symbols) | `.claude/skills/generated/textpolish/SKILL.md` |
+| Work in the Cluster_10 area (6 symbols) | `.claude/skills/generated/cluster-10/SKILL.md` |
+| Work in the Cluster_11 area (6 symbols) | `.claude/skills/generated/cluster-11/SKILL.md` |
 
 <!-- gitnexus:end -->

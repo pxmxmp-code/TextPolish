@@ -14,8 +14,8 @@ from bs4 import BeautifulSoup
 class ClipboardManager:
     """剪贴板管理器 - 负责处理各种剪贴板操作"""
 
-    CHINESE_QUOTE_CHARS = "“”‘’"
-    CHINESE_QUOTE_STYLE = (
+    CHINESE_PUNCTUATION_CHARS = "“”‘’—…、。，；：！？（）【】《》"
+    CHINESE_PUNCTUATION_STYLE = (
         "font-family:方正仿宋_GBK;"
         "mso-fareast-font-family:方正仿宋_GBK;"
         "mso-ascii-font-family:方正仿宋_GBK;"
@@ -25,28 +25,58 @@ class ClipboardManager:
     )
 
     @classmethod
+    def _format_plain_text_line(cls, line: str) -> str:
+        fragments = []
+        plain_buffer = []
+        punctuation_buffer = []
+
+        def flush_plain():
+            if plain_buffer:
+                fragments.append(html_lib.escape("".join(plain_buffer)))
+                plain_buffer.clear()
+
+        def flush_punctuation():
+            if punctuation_buffer:
+                escaped_text = html_lib.escape("".join(punctuation_buffer))
+                fragments.append(
+                    f'<span lang="ZH-CN" style="{cls.CHINESE_PUNCTUATION_STYLE}">'
+                    f"{escaped_text}</span>"
+                )
+                punctuation_buffer.clear()
+
+        for char in line:
+            if char in cls.CHINESE_PUNCTUATION_CHARS:
+                flush_plain()
+                punctuation_buffer.append(char)
+            else:
+                flush_punctuation()
+                plain_buffer.append(char)
+
+        flush_plain()
+        flush_punctuation()
+        return "".join(fragments)
+
+    @classmethod
     def _plain_text_to_html(cls, text: str) -> str:
         """生成极简 HTML，让 Word/WPS 粘贴时保留中文引号字体"""
         normalized_text = text.replace("\r\n", "\n").replace("\r", "\n")
-        html_lines = []
+        paragraphs = []
 
         for line in normalized_text.split("\n"):
-            escaped_chars = []
-            for char in line:
-                escaped_char = html_lib.escape(char)
-                if char in cls.CHINESE_QUOTE_CHARS:
-                    escaped_chars.append(
-                        f'<span lang="ZH-CN" style="{cls.CHINESE_QUOTE_STYLE}">'
-                        f"{escaped_char}</span>"
-                    )
-                else:
-                    escaped_chars.append(escaped_char)
-            html_lines.append("".join(escaped_chars))
+            content = cls._format_plain_text_line(line) if line else "&nbsp;"
+            paragraphs.append(f'<p class="MsoNormal">{content}</p>')
 
-        body_content = "<br>".join(html_lines)
-        return f"""<html>
+        body_content = "\n".join(paragraphs)
+        return f"""<html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:w="urn:schemas-microsoft-com:office:word" xmlns="http://www.w3.org/TR/REC-html40">
 <head>
 <meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style>
+p.MsoNormal {{
+    margin: 0pt;
+    margin-bottom: .0001pt;
+    text-align: left;
+}}
+</style>
 </head>
 <body>
 <!--StartFragment-->

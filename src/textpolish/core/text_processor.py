@@ -85,7 +85,7 @@ class TextProcessor:
         import re
 
         # 第一步：将所有西文引号统一替换为标记符号
-        # 使用占位符来追踪引号位置
+        # 使用占位符来追踪引号位置d
         placeholder_double_open = '\x00DO\x00'   # 双引号开
         placeholder_double_close = '\x01DC\x01'  # 双引号闭
         placeholder_single_open = '\x02SO\x02'    # 单引号开

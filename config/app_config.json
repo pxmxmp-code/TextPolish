@@ -129,5 +129,86 @@
     "enable_h2": true,
     "enable_h3": true,
     "enable_special": true
-  }
+  },
+  "default_recognition_rules": [
+    {
+      "id": "chapter",
+      "name": "第一章 / 第十二章",
+      "matcher_type": "chapter",
+      "target_level": "h1",
+      "enabled": true,
+      "priority": 10,
+      "params": {
+        "sample": "第一章 总则"
+      }
+    },
+    {
+      "id": "section",
+      "name": "第一节 / 第三节",
+      "matcher_type": "section",
+      "target_level": "h2",
+      "enabled": true,
+      "priority": 20,
+      "params": {
+        "sample": "第一节 基本情况"
+      }
+    },
+    {
+      "id": "chinese_list",
+      "name": "一、二、三、",
+      "matcher_type": "chinese_list",
+      "target_level": "h2",
+      "enabled": true,
+      "priority": 30,
+      "params": {
+        "sample": "一、总体要求"
+      }
+    },
+    {
+      "id": "chinese_parentheses",
+      "name": "（一）（二）",
+      "matcher_type": "chinese_parentheses",
+      "target_level": "h3",
+      "enabled": true,
+      "priority": 40,
+      "params": {
+        "sample": "（一）政策支持"
+      }
+    },
+    {
+      "id": "arabic_comma",
+      "name": "1、2、3、",
+      "matcher_type": "arabic_comma",
+      "target_level": "h3",
+      "enabled": true,
+      "priority": 50,
+      "params": {
+        "sample": "1、项目背景"
+      }
+    },
+    {
+      "id": "arabic_dot",
+      "name": "1. 2. 3.",
+      "matcher_type": "arabic_dot",
+      "target_level": "h3",
+      "enabled": true,
+      "priority": 60,
+      "params": {
+        "sample": "1. Project background"
+      }
+    },
+    {
+      "id": "prefix_symbol",
+      "name": "段首到符号",
+      "matcher_type": "prefix_symbol",
+      "target_level": "special_format",
+      "enabled": true,
+      "priority": 70,
+      "params": {
+        "sample": "技术创新能力：正文内容",
+        "delimiters": ["。", "："],
+        "custom_delimiter": ""
+      }
+    }
+  ]
 }

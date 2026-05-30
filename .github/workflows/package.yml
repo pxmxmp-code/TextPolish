@@ -1,0 +1,63 @@
+name: Package TextPolish
+
+on:
+  push:
+    tags:
+      - 'v[0-9]+.[0-9]+.[0-9]+'
+
+env:
+  PYTHON_VERSION: '3.13'
+
+jobs:
+  package-windows:
+    runs-on: windows-latest
+    permissions:
+      contents: read
+
+    steps:
+    - name: 检出代码
+      uses: actions/checkout@v4
+      
+    - name: 安装Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: ${{ env.PYTHON_VERSION }}
+        
+    - name: 安装uv
+      uses: astral-sh/setup-uv@v3
+      with:
+        enable-cache: true
+        
+    - name: 安装项目依赖
+      run: |
+        uv sync
+        
+    - name: 构建exe文件
+      run: |
+        # 清理旧的构建文件
+        if (Test-Path "build") { Remove-Item -Recurse -Force "build" }
+        if (Test-Path "dist") { Remove-Item -Recurse -Force "dist" }
+        if (Test-Path "*.spec") { Remove-Item -Force "*.spec" }
+        
+        # 直接使用PyInstaller构建
+        uv run python -m PyInstaller --onefile --windowed --name=TextPolish --clean --noconfirm --add-data="icon.ico;." --icon=icon.ico main.py
+        
+    - name: 验证构建结果
+      run: |
+        if (Test-Path "dist/TextPolish.exe") {
+          Write-Host "✅ 构建成功！exe文件已生成"
+          $fileSize = (Get-Item "dist/TextPolish.exe").Length
+          $sizeMB = [math]::Round($fileSize / 1MB, 2)
+          Write-Host "📦 文件大小: $sizeMB MB"
+        } else {
+          Write-Host "❌ 构建失败！未找到exe文件"
+          exit 1
+        }
+        
+    - name: 上传构建产物
+      uses: actions/upload-artifact@v4
+      with:
+        name: TextPolish-${{ github.ref_name }}-Windows
+        path: dist/TextPolish.exe
+        if-no-files-found: error
+        retention-days: 30

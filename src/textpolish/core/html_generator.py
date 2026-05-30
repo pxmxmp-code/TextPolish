@@ -11,6 +11,9 @@ from ..config import THEME_COLORS, HTML_NAMESPACE, user_config_manager
 
 class HTMLGenerator:
     """HTML生成器 - 负责将文本转换为HTML格式"""
+
+    WESTERN_FONT_FAMILY = "&quot;Times New Roman&quot;"
+    WESTERN_FONT_TYPES = ("ascii", "hansi", "bidi")
     
     def __init__(self):
         """初始化HTML生成器"""
@@ -48,21 +51,33 @@ class HTMLGenerator:
             html_lines.append(html_line)
         
         return '\n'.join(html_lines)
+
+    def _western_font_declaration(self, font_type: str) -> str:
+        """生成单个 Office 西文字体声明"""
+        return f"mso-{font_type}-font-family:{self.WESTERN_FONT_FAMILY};"
+
+    def _western_font_declarations(self) -> str:
+        """生成 Office 西文字体声明"""
+        return ''.join(
+            self._western_font_declaration(font_type)
+            for font_type in self.WESTERN_FONT_TYPES
+        )
+
+    def _western_span_style(self) -> str:
+        """生成西文字符 span 样式"""
+        return (
+            f"font-family:{self.WESTERN_FONT_FAMILY};"
+            f"{self._western_font_declarations()}"
+            "mso-ansi-language:EN-US;"
+        )
     
     def _wrap_numbers_with_western_font(self, text: str) -> str:
-        """将数字序列包裹为 Times New Roman 字体，保留其余文本字体不变"""
+        """将西文和数字包裹为 Times New Roman 字体，中文引号保留中文字体"""
         def repl(match):
-            num = match.group(0)
-            return (
-                '<span style="font-family:\'Times New Roman\';" '
-                + 'mso-ascii-font-family:\'Times New Roman\';'
-                + 'mso-hansi-font-family:\'Times New Roman\';'
-                + 'mso-bidi-font-family:\'Times New Roman\';>'
-                + num
-                + '</span>'
-            )
-        # 数字序列：支持千分位逗号、小数点、百分号、年号中的数字
-        pattern = r"(?<![A-Za-z])(?:\d[\d,\.]*%?)"
+            western_text = match.group(0)
+            return f'<span lang="EN-US" style=\'{self._western_span_style()}\'>{western_text}</span>'
+
+        pattern = r"[A-Za-z]+(?:[-'][A-Za-z]+)*|\d[\d,\.]*%?"
         return re.sub(pattern, repl, text)
     
     def _process_line(self, line: str, enable_h1: bool, 
@@ -80,6 +95,26 @@ class HTMLGenerator:
         Returns:
             格式化的HTML行
         """
+        enabled_levels = set()
+        if enable_h1:
+            enabled_levels.add('h1')
+        if enable_h2:
+            enabled_levels.add('h2')
+        if enable_h3:
+            enabled_levels.add('h3')
+        if enable_special:
+            enabled_levels.add('special_format')
+
+        semantic_match = user_config_manager.classify_line(line, enabled_levels)
+        if semantic_match:
+            if semantic_match.target_level in {'h1', 'h2', 'h3'}:
+                return self._generate_title_html(line, semantic_match.target_level)
+            if semantic_match.target_level == 'special_format':
+                return self._generate_special_format_html(
+                    semantic_match.matched_text,
+                    semantic_match.remaining_text
+                )
+
         # 检查一级标题
         if enable_h1 and self._is_title_level(line, 'h1'):
             return self._generate_title_html(line, 'h1')
@@ -374,6 +409,14 @@ p.MsoNormal {{
 </body>
 </html>"""
         return html_template
+
+    def _normalize_wps_western_font(self, body_content: str) -> str:
+        """确保 WPS/Word 按 Times New Roman 渲染西文字符"""
+        return re.sub(
+            r"mso-(ascii|hansi|bidi)-font-family:(?!&quot;Times New Roman&quot;)[^;]+;",
+            lambda match: self._western_font_declaration(match.group(1)),
+            body_content
+        )
     
     def generate_wps_html(self, body_content: str) -> str:
         """
@@ -385,6 +428,8 @@ p.MsoNormal {{
         Returns:
             完整的WPS兼容HTML文档
         """
+        body_content = self._normalize_wps_western_font(body_content)
+
         html_template = f"""<html {HTML_NAMESPACE}>
 <head>
 <meta http-equiv="Content-Type" content="text/html; charset=utf-8">

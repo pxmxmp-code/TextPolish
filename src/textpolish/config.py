@@ -110,8 +110,9 @@ HTML_NAMESPACE = 'xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:w="urn
 
 import json
 import os
-from dataclasses import dataclass, asdict
-from typing import Dict, List, Optional
+import re
+from dataclasses import dataclass, asdict, field
+from typing import Any, Dict, List, Optional
 from PyQt6.QtCore import QSettings
 
 
@@ -137,21 +138,195 @@ class RegexPattern:
 
 
 @dataclass
+class RecognitionRule:
+    """面向用户的语义识别规则"""
+
+    id: str
+    name: str
+    matcher_type: str
+    target_level: str = "disabled"
+    enabled: bool = True
+    priority: int = 0
+    params: Dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass(frozen=True)
+class RecognitionMatch:
+    """单行文本的识别结果"""
+
+    rule_id: str
+    rule_name: str
+    target_level: str
+    matched_text: str
+    remaining_text: str = ""
+
+
+@dataclass
 class TitleConfig:
     """标题级别配置"""
     style: StyleConfig
     patterns: List[RegexPattern]
 
 
+RECOGNITION_TARGET_LABELS = {
+    "disabled": "关闭",
+    "h1": "一级标题",
+    "h2": "二级标题",
+    "h3": "三级标题",
+    "special_format": "特殊格式",
+}
+
+DEFAULT_SEGMENT_DELIMITERS = ["。", "："]
+SEGMENT_DELIMITER_OPTIONS = ["。", "：", "；", "，"]
+
+
 class UserConfigManager:
     """用户配置管理器"""
+
+    CONFIG_LEVELS = {"h1", "h2", "h3", "normal", "special_format"}
     
     def __init__(self):
         # 设置QSettings的组织名称和应用名称，确保配置文件有合适的路径
         self.settings = QSettings(APP_ORGANIZATION, APP_NAME)
         self._config: Dict[str, TitleConfig] = {}
+        self._recognition_rules: List[RecognitionRule] = []
         self._load_default_config()
         self.load_config()
+
+    def _default_recognition_rules(self) -> List[RecognitionRule]:
+        """默认语义识别规则，用户只需要分配输出级别"""
+        return [
+            RecognitionRule(
+                id="chapter",
+                name="第一章 / 第十二章",
+                matcher_type="chapter",
+                target_level="h1",
+                priority=10,
+                params={"sample": "第一章 总则"},
+            ),
+            RecognitionRule(
+                id="section",
+                name="第一节 / 第三节",
+                matcher_type="section",
+                target_level="h2",
+                priority=20,
+                params={"sample": "第一节 基本情况"},
+            ),
+            RecognitionRule(
+                id="chinese_list",
+                name="一、二、三、",
+                matcher_type="chinese_list",
+                target_level="h2",
+                priority=30,
+                params={"sample": "一、总体要求"},
+            ),
+            RecognitionRule(
+                id="chinese_parentheses",
+                name="（一）（二）",
+                matcher_type="chinese_parentheses",
+                target_level="h3",
+                priority=40,
+                params={"sample": "（一）政策支持"},
+            ),
+            RecognitionRule(
+                id="arabic_comma",
+                name="1、2、3、",
+                matcher_type="arabic_comma",
+                target_level="h3",
+                priority=50,
+                params={"sample": "1、项目背景"},
+            ),
+            RecognitionRule(
+                id="arabic_dot",
+                name="1. 2. 3.",
+                matcher_type="arabic_dot",
+                target_level="h3",
+                priority=60,
+                params={"sample": "1. Project background"},
+            ),
+            RecognitionRule(
+                id="prefix_symbol",
+                name="段首到符号",
+                matcher_type="prefix_symbol",
+                target_level="special_format",
+                priority=70,
+                params={
+                    "sample": "技术创新能力：正文内容",
+                    "delimiters": DEFAULT_SEGMENT_DELIMITERS.copy(),
+                    "custom_delimiter": "",
+                },
+            ),
+        ]
+
+    def _coerce_recognition_rule(self, data: Dict[str, Any], fallback: RecognitionRule = None) -> RecognitionRule:
+        """把配置字典转换为 RecognitionRule，并兼容缺失字段"""
+        base = asdict(fallback) if fallback else {}
+        base.update(data)
+        params = base.get("params") or {}
+        if not isinstance(params, dict):
+            params = {}
+        return RecognitionRule(
+            id=str(base.get("id", "")),
+            name=str(base.get("name", "")),
+            matcher_type=str(base.get("matcher_type", "")),
+            target_level=str(base.get("target_level", "disabled")),
+            enabled=bool(base.get("enabled", True)),
+            priority=int(base.get("priority", 0)),
+            params=params,
+        )
+
+    def _load_recognition_rules_data(self, data: List[Dict[str, Any]]) -> List[RecognitionRule]:
+        """加载语义规则，保留默认规则并合并用户选择"""
+        defaults = {rule.id: rule for rule in self._default_recognition_rules()}
+        loaded: Dict[str, RecognitionRule] = {}
+
+        for raw_rule in data or []:
+            if not isinstance(raw_rule, dict):
+                continue
+            rule_id = str(raw_rule.get("id", ""))
+            fallback = defaults.get(rule_id)
+            rule = self._coerce_recognition_rule(raw_rule, fallback)
+            if rule.id:
+                loaded[rule.id] = rule
+
+        for rule_id, default_rule in defaults.items():
+            loaded.setdefault(rule_id, default_rule)
+
+        return sorted(loaded.values(), key=lambda rule: rule.priority)
+
+    def _migrate_legacy_patterns_to_rules(self) -> List[RecognitionRule]:
+        """将旧正则配置尽量映射到新的语义规则"""
+        rules = {rule.id: rule for rule in self._default_recognition_rules()}
+        pattern_map = {
+            r"^第[一二三四五六七八九十\d]+章": "chapter",
+            r"^第[一二三四五六七八九十\d]+节": "section",
+            r"^[一二三四五六七八九十]+、": "chinese_list",
+            r"^（[一二三四五六七八九十\d]+）": "chinese_parentheses",
+            r"^（([一二三四五六七八九十\d]+)）([^。]+。)(.*)": "prefix_symbol",
+            r"^([^：]*：)(.*)": "prefix_symbol",
+        }
+
+        for level, title_config in self._config.items():
+            for pattern in title_config.patterns:
+                rule_id = pattern_map.get(pattern.pattern)
+                if not rule_id or rule_id not in rules:
+                    continue
+                rule = rules[rule_id]
+                rule.target_level = level
+                rule.enabled = pattern.enabled
+
+        return sorted(rules.values(), key=lambda rule: rule.priority)
+
+    def _serialize_config(self) -> Dict[str, Any]:
+        """序列化完整配置，包含旧正则字段和新语义规则字段"""
+        config_dict: Dict[str, Any] = {}
+        for level, title_config in self._config.items():
+            config_dict[level] = {
+                'style': asdict(title_config.style),
+                'patterns': [asdict(pattern) for pattern in title_config.patterns]
+            }
+        config_dict['_recognition_rules'] = [asdict(rule) for rule in self._recognition_rules]
+        return config_dict
     
     def _load_default_config(self):
         """加载默认配置"""
@@ -277,6 +452,7 @@ class UserConfigManager:
                 ]
             )
         }
+        self._recognition_rules = self._migrate_legacy_patterns_to_rules()
     
     def get_config(self, level: str) -> Optional[TitleConfig]:
         """获取指定级别的配置"""
@@ -337,12 +513,7 @@ class UserConfigManager:
                 os.makedirs(config_dir, exist_ok=True)
                 print(f"创建配置目录: {config_dir}")
             
-            config_dict = {}
-            for level, title_config in self._config.items():
-                config_dict[level] = {
-                    'style': asdict(title_config.style),
-                    'patterns': [asdict(pattern) for pattern in title_config.patterns]
-                }
+            config_dict = self._serialize_config()
             
             self.settings.setValue("user_config", json.dumps(config_dict, ensure_ascii=False))
             # 强制同步到文件
@@ -371,11 +542,19 @@ class UserConfigManager:
                         patterns = [RegexPattern(**pattern_data) for pattern_data in patterns_data]
                         
                         self._config[level] = TitleConfig(style=style, patterns=patterns)
+
+                rules_data = config_dict.get('_recognition_rules')
+                if isinstance(rules_data, list):
+                    self._recognition_rules = self._load_recognition_rules_data(rules_data)
+                else:
+                    self._recognition_rules = self._migrate_legacy_patterns_to_rules()
                 
                 print(f"用户配置加载成功，共 {len(config_dict)} 个级别")
             else:
                 print("未找到用户配置，使用默认配置")
                 # 第一次运行时保存默认配置
+                if not self._recognition_rules:
+                    self._recognition_rules = self._migrate_legacy_patterns_to_rules()
                 self.save_config()
                         
         except Exception as e:
@@ -394,6 +573,84 @@ class UserConfigManager:
             return []
         
         return [pattern.pattern for pattern in self._config[level].patterns if pattern.enabled]
+
+    def get_recognition_rules(self) -> List[RecognitionRule]:
+        """获取语义识别规则副本"""
+        return [
+            RecognitionRule(**asdict(rule))
+            for rule in sorted(self._recognition_rules, key=lambda item: item.priority)
+        ]
+
+    def update_recognition_rules(self, rules: List[RecognitionRule]):
+        """更新语义识别规则"""
+        self._recognition_rules = sorted(rules, key=lambda rule: rule.priority)
+        self.save_config()
+
+    def _match_recognition_rule(self, rule: RecognitionRule, line: str) -> Optional[tuple[str, str]]:
+        """执行单条语义规则匹配，返回匹配段和剩余文本"""
+        text = line.strip()
+        matcher_patterns = {
+            "chapter": r"^第[一二三四五六七八九十百千万\d]+章",
+            "section": r"^第[一二三四五六七八九十百千万\d]+节",
+            "chinese_list": r"^[一二三四五六七八九十百千万]+、",
+            "chinese_parentheses": r"^（[一二三四五六七八九十百千万\d]+）",
+            "arabic_comma": r"^\d+、",
+            "arabic_dot": r"^\d+\.",
+        }
+
+        if rule.matcher_type in matcher_patterns:
+            return (text, "") if re.match(matcher_patterns[rule.matcher_type], text) else None
+
+        if rule.matcher_type == "prefix_symbol":
+            delimiters = [
+                delimiter for delimiter in rule.params.get("delimiters", [])
+                if isinstance(delimiter, str) and delimiter
+            ]
+            custom_delimiter = str(rule.params.get("custom_delimiter", "")).strip()
+            if custom_delimiter and custom_delimiter not in delimiters:
+                delimiters.append(custom_delimiter)
+
+            candidates = []
+            for delimiter in delimiters:
+                index = text.find(delimiter)
+                if index > 0:
+                    candidates.append((index, delimiter))
+
+            if not candidates:
+                return None
+
+            index, delimiter = min(candidates, key=lambda item: item[0])
+            end_index = index + len(delimiter)
+            return text[:end_index], text[end_index:].strip()
+
+        return None
+
+    def classify_line(self, line: str, enabled_levels: Optional[set[str]] = None) -> Optional[RecognitionMatch]:
+        """按语义规则识别单行文本"""
+        for rule in sorted(self._recognition_rules, key=lambda item: item.priority):
+            if not rule.enabled or rule.target_level == "disabled":
+                continue
+            if enabled_levels is not None and rule.target_level not in enabled_levels:
+                continue
+
+            match = self._match_recognition_rule(rule, line)
+            if not match:
+                continue
+
+            matched_text, remaining_text = match
+            if rule.target_level != "special_format":
+                matched_text = line.strip()
+                remaining_text = ""
+
+            return RecognitionMatch(
+                rule_id=rule.id,
+                rule_name=rule.name,
+                target_level=rule.target_level,
+                matched_text=matched_text,
+                remaining_text=remaining_text,
+            )
+
+        return None
     
     def get_style_dict(self, level: str) -> Dict:
         """获取指定级别的样式字典（兼容原有格式）"""
@@ -443,12 +700,7 @@ class UserConfigManager:
     def export_config_to_file(self, file_path: str):
         """导出配置到指定文件"""
         try:
-            config_dict = {}
-            for level, title_config in self._config.items():
-                config_dict[level] = {
-                    'style': asdict(title_config.style),
-                    'patterns': [asdict(pattern) for pattern in title_config.patterns]
-                }
+            config_dict = self._serialize_config()
             
             with open(file_path, 'w', encoding='utf-8') as f:
                 json.dump(config_dict, f, ensure_ascii=False, indent=2)
@@ -475,6 +727,12 @@ class UserConfigManager:
                     patterns = [RegexPattern(**pattern_data) for pattern_data in patterns_data]
                     
                     self._config[level] = TitleConfig(style=style, patterns=patterns)
+
+            rules_data = config_dict.get('_recognition_rules')
+            if isinstance(rules_data, list):
+                self._recognition_rules = self._load_recognition_rules_data(rules_data)
+            else:
+                self._recognition_rules = self._migrate_legacy_patterns_to_rules()
             
             # 保存到QSettings
             self.save_config()
@@ -515,7 +773,7 @@ class UserConfigManager:
                     print(f"从应用配置加载默认设置: {app_config_path}")
                     
                     for level, data in default_user_config.items():
-                        if level in self._config:
+                        if level in self.CONFIG_LEVELS:
                             # 加载样式配置
                             style_data = data.get('style', {})
                             style = StyleConfig(**style_data)
@@ -525,6 +783,12 @@ class UserConfigManager:
                             patterns = [RegexPattern(**pattern_data) for pattern_data in patterns_data]
                             
                             self._config[level] = TitleConfig(style=style, patterns=patterns)
+
+                    rules_data = app_config.get('default_recognition_rules')
+                    if isinstance(rules_data, list):
+                        self._recognition_rules = self._load_recognition_rules_data(rules_data)
+                    else:
+                        self._recognition_rules = self._migrate_legacy_patterns_to_rules()
                     
                     return True
                 

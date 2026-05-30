@@ -3,22 +3,154 @@
 配置界面页面 - 按标题级别组织的简洁配置界面
 """
 
+import re
+from dataclasses import dataclass
+
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QGridLayout, QFormLayout, 
-    QGroupBox, QFrame, QLabel, QSizePolicy, QSpacerItem
+    QGroupBox, QFrame, QLabel, QSizePolicy, QSpacerItem, QStackedWidget
 )
 from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtGui import QFont
 from qfluentwidgets import (
     ScrollArea, PrimaryPushButton, PushButton, TransparentPushButton,
-    LineEdit, ComboBox, BodyLabel, StrongBodyLabel, TitleLabel, 
+    LineEdit, ComboBox, EditableComboBox, BodyLabel, StrongBodyLabel, TitleLabel,
     CardWidget, CheckBox, TextEdit, FluentIcon as FIF, InfoBar, 
     InfoBarPosition, MessageBox, SubtitleLabel, CaptionLabel,
     Pivot, qconfig, setTheme, Theme, isDarkTheme, ExpandLayout,
     setCustomStyleSheet, HeaderCardWidget, IconWidget
 )
 
-from ..config import user_config_manager, StyleConfig, RegexPattern
+from ..config import (
+    RECOGNITION_TARGET_LABELS,
+    SEGMENT_DELIMITER_OPTIONS,
+    RecognitionRule,
+    user_config_manager,
+    StyleConfig,
+    RegexPattern,
+)
+
+
+class BodyClickableComboBox(ComboBox):
+    """点击下拉框任意位置都展开菜单"""
+
+    def _show_menu_from_body_click(self):
+        self.setFocus(Qt.FocusReason.MouseFocusReason)
+        if hasattr(self, '_showComboMenu'):
+            self._showComboMenu()
+        elif hasattr(self, 'showMenu'):
+            self.showMenu()
+
+    def mousePressEvent(self, event):
+        if event.button() == Qt.MouseButton.LeftButton and self.isEnabled():
+            event.accept()
+            return
+        super().mousePressEvent(event)
+
+    def mouseReleaseEvent(self, event):
+        if event.button() == Qt.MouseButton.LeftButton and self.isEnabled():
+            self._show_menu_from_body_click()
+            event.accept()
+            return
+        super().mouseReleaseEvent(event)
+
+
+class BodyClickableEditableComboBox(EditableComboBox):
+    """点击可编辑下拉框任意位置都展开菜单"""
+
+    def _show_menu_from_body_click(self):
+        self.setFocus(Qt.FocusReason.MouseFocusReason)
+        if hasattr(self, '_showComboMenu'):
+            self._showComboMenu()
+
+    def mousePressEvent(self, event):
+        if event.button() == Qt.MouseButton.LeftButton and self.isEnabled():
+            event.accept()
+            return
+        super().mousePressEvent(event)
+
+    def mouseReleaseEvent(self, event):
+        if event.button() == Qt.MouseButton.LeftButton and self.isEnabled():
+            self._show_menu_from_body_click()
+            event.accept()
+            return
+        super().mouseReleaseEvent(event)
+
+
+@dataclass(frozen=True)
+class RuleTemplate:
+    """面向用户的规则模板，最终仍生成底层正则表达式"""
+
+    id: str
+    label: str
+    sample: str
+    pattern: str = ""
+    placeholder: str = ""
+    parameter_required: bool = False
+
+
+ADVANCED_RULE_TEMPLATE = RuleTemplate(
+    id="advanced",
+    label="高级正则",
+    sample="自定义表达式",
+    placeholder="输入正则表达式",
+)
+
+RULE_TEMPLATES = {
+    'h1': [
+        RuleTemplate("chapter", "第 X 章", "第一章", r"^第[一二三四五六七八九十\d]+章"),
+        RuleTemplate("exact_text", "固定文本", "前言", parameter_required=True, placeholder="前言"),
+    ],
+    'h2': [
+        RuleTemplate("section", "第 X 节", "第一节", r"^第[一二三四五六七八九十\d]+节"),
+        RuleTemplate("cn_list", "一、二、三、", "一、基本情况", r"^[一二三四五六七八九十]+、"),
+        RuleTemplate("exact_text", "固定文本", "结语", parameter_required=True, placeholder="结语"),
+    ],
+    'h3': [
+        RuleTemplate("bracket_number", "（一）（二）", "（一）政策支持", r"^（[一二三四五六七八九十\d]+）"),
+        RuleTemplate("exact_text", "固定文本", "补充说明", parameter_required=True, placeholder="补充说明"),
+    ],
+    'special_format': [
+        RuleTemplate("bracket_sentence", "（一）到句号", "（一）政策支持。正文", r"^（([一二三四五六七八九十\d]+)）([^。]+。)(.*)"),
+        RuleTemplate("first_sentence", "特殊句式到句号", "一是产业扩大。正文", r"^([一二三四五六七八九十\d]+[是的][^。]*。)(.*)"),
+        RuleTemplate("colon_title", "冒号前重点", "技术创新能力：正文", r"^([^：]*：)(.*)"),
+    ],
+}
+
+FONT_FAMILY_OPTIONS = [
+    "方正小标宋_GBK",
+    "方正黑体_GBK",
+    "方正楷体_GBK",
+    "方正仿宋_GBK",
+    "宋体",
+    "黑体",
+    "楷体",
+    "仿宋",
+]
+
+FONT_SIZE_OPTIONS = [
+    ("小二 18pt", "18.0000pt"),
+    ("三号 16pt", "16.0000pt"),
+    ("四号 14pt", "14.0000pt"),
+    ("小四 12pt", "12.0000pt"),
+]
+
+FONT_WEIGHT_OPTIONS = [
+    ("常规", "normal"),
+    ("加粗", "bold"),
+]
+
+ALIGNMENT_OPTIONS = [
+    ("左对齐", "left"),
+    ("居中", "center"),
+    ("右对齐", "right"),
+    ("两端对齐", "justify"),
+]
+
+TEXT_INDENT_OPTIONS = [
+    ("无缩进", "0.0000pt"),
+    ("首行缩进 2 字符", "36.0000pt"),
+]
 
 
 class TitleLevelCard(CardWidget):
@@ -39,9 +171,10 @@ class TitleLevelCard(CardWidget):
     
     def setup_ui(self):
         """设置UI界面"""
+        self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(24, 24, 24, 24)  # 增加内边距
-        layout.setSpacing(20)  # 增加组件间距
+        layout.setContentsMargins(18, 16, 18, 16)
+        layout.setSpacing(12)
         
         # 标题 - 使用 HeaderCardWidget 替代
         # 根据级别选择不同图标
@@ -53,171 +186,335 @@ class TitleLevelCard(CardWidget):
             'special_format': FIF.PALETTE
         }
         
-        # 使用 HeaderCardWidget 作为标题容器
-        title_header = HeaderCardWidget(self)
-        title_header.setTitle(self.title)
-        
-        # 创建图标和描述
+        title_row = QWidget(self)
+        title_layout = QHBoxLayout(title_row)
+        title_layout.setContentsMargins(0, 0, 0, 0)
+        title_layout.setSpacing(10)
+
         icon_widget = IconWidget(icon_map.get(self.level, FIF.SETTING), self)
-        icon_widget.setFixedSize(16, 16)
-        
-        description_label = BodyLabel(f"{self.title} 的样式和匹配规则配置", self)
-        
-        # 创建图标和描述的布局
-        header_layout = QHBoxLayout()
-        header_layout.setContentsMargins(0, 0, 0, 0)
-        header_layout.setSpacing(8)
-        header_layout.addWidget(icon_widget)
-        header_layout.addWidget(description_label)
-        header_layout.addStretch()
-        
-        title_header.viewLayout.addLayout(header_layout)
-        layout.addWidget(title_header)
+        icon_widget.setFixedSize(20, 20)
+        title_layout.addWidget(icon_widget)
+
+        title_label = SubtitleLabel(self.title, self)
+        title_layout.addWidget(title_label)
+
+        description_label = CaptionLabel("样式设置", self)
+        description_label.setStyleSheet("color: #777777;")
+        title_layout.addWidget(description_label)
+        title_layout.addStretch()
+        layout.addWidget(title_row)
         
         # 样式配置区域
         style_group = self.create_style_section()
         layout.addWidget(style_group)
         
-        # 匹配规则区域（只对h1、h2、h3、special_format显示）
-        if self.level in ['h1', 'h2', 'h3', 'special_format']:
-            rules_group = self.create_rules_section()
-            layout.addWidget(rules_group)
-        
+        layout.addStretch()
+
+    def _set_combo_text(self, combo: ComboBox, value: str):
+        """设置可编辑下拉框文本"""
+        index = combo.findText(value)
+        if index >= 0:
+            combo.setCurrentIndex(index)
+        elif hasattr(combo, 'setText'):
+            combo.setText(value)
+
+    def _set_mapped_combo(self, combo: ComboBox, options: list[tuple[str, str]], value: str):
+        """按保存值设置映射下拉框"""
+        for index, (_, option_value) in enumerate(options):
+            if option_value == value:
+                combo.setCurrentIndex(index)
+                return
+        if hasattr(combo, 'setText'):
+            combo.setText(value)
+
+    def _combo_text(self, combo: ComboBox) -> str:
+        """读取下拉框当前文本"""
+        return combo.currentText().strip()
+
+    def _mapped_combo_value(self, combo: ComboBox, options: list[tuple[str, str]]) -> str:
+        """读取映射下拉框保存值"""
+        current_text = combo.currentText().strip()
+        for label, value in options:
+            if current_text == label:
+                return value
+        return current_text
+
+    def _template_options(self) -> list[RuleTemplate]:
+        """获取当前级别可用规则模板"""
+        return [*RULE_TEMPLATES.get(self.level, []), ADVANCED_RULE_TEMPLATE]
     
     def create_style_section(self):
         """创建样式配置区域"""
-        group = HeaderCardWidget(self)
-        group.setTitle("📝 样式设置")
-        
-        # 使用网格布局来更好地组织控件
+        group = QFrame(self)
+        group.setObjectName("ConfigSection")
+
+        section_layout = QVBoxLayout(group)
+        section_layout.setContentsMargins(14, 12, 14, 12)
+        section_layout.setSpacing(8)
+        section_layout.addWidget(StrongBodyLabel("样式设置", group))
+
         grid_widget = QWidget()
         grid_layout = QGridLayout(grid_widget)
-        grid_layout.setContentsMargins(16, 16, 16, 16)
-        grid_layout.setHorizontalSpacing(20)
-        grid_layout.setVerticalSpacing(16)
+        grid_layout.setContentsMargins(0, 0, 0, 0)
+        grid_layout.setHorizontalSpacing(12)
+        grid_layout.setVerticalSpacing(8)
         
         # 第一行：字体设置
-        grid_layout.addWidget(BodyLabel("字体:"), 0, 0)
-        self.font_family_edit = LineEdit()
-        self.font_family_edit.setPlaceholderText("如：方正仿宋_GBK")
-        self.font_family_edit.setMinimumWidth(200)
+        grid_layout.addWidget(BodyLabel("字体"), 0, 0)
+        self.font_family_edit = BodyClickableEditableComboBox()
+        self.font_family_edit.addItems(FONT_FAMILY_OPTIONS)
+        self.font_family_edit.setMinimumWidth(150)
         grid_layout.addWidget(self.font_family_edit, 0, 1)
         
-        grid_layout.addWidget(BodyLabel("字号:"), 0, 2)
-        self.font_size_edit = LineEdit()
-        self.font_size_edit.setPlaceholderText("如：16.0000pt")
-        self.font_size_edit.setMinimumWidth(120)
+        grid_layout.addWidget(BodyLabel("字号"), 0, 2)
+        self.font_size_edit = BodyClickableEditableComboBox()
+        self.font_size_edit.addItems([label for label, _ in FONT_SIZE_OPTIONS])
+        self.font_size_edit.setMinimumWidth(110)
         grid_layout.addWidget(self.font_size_edit, 0, 3)
         
         # 第二行：样式设置
-        grid_layout.addWidget(BodyLabel("粗细:"), 1, 0)
-        self.font_weight_combo = ComboBox()
-        self.font_weight_combo.addItems(["normal", "bold"])
-        self.font_weight_combo.setMinimumWidth(120)
+        grid_layout.addWidget(BodyLabel("粗细"), 1, 0)
+        self.font_weight_combo = BodyClickableComboBox()
+        self.font_weight_combo.addItems([label for label, _ in FONT_WEIGHT_OPTIONS])
+        self.font_weight_combo.setMinimumWidth(110)
         grid_layout.addWidget(self.font_weight_combo, 1, 1)
         
-        grid_layout.addWidget(BodyLabel("对齐:"), 1, 2)
-        self.alignment_combo = ComboBox()
-        self.alignment_combo.addItems(["left", "center", "right", "justify"])
-        self.alignment_combo.setMinimumWidth(120)
+        grid_layout.addWidget(BodyLabel("对齐"), 1, 2)
+        self.alignment_combo = BodyClickableComboBox()
+        self.alignment_combo.addItems([label for label, _ in ALIGNMENT_OPTIONS])
+        self.alignment_combo.setMinimumWidth(110)
         grid_layout.addWidget(self.alignment_combo, 1, 3)
         
         # 第三行：首行缩进（仅对正文显示）
         if self.level == 'normal':
-            grid_layout.addWidget(BodyLabel("首行缩进:"), 2, 0)
-            self.text_indent_edit = LineEdit()
-            self.text_indent_edit.setPlaceholderText("如：36.0000pt")
-            self.text_indent_edit.setMinimumWidth(120)
+            grid_layout.addWidget(BodyLabel("首行缩进"), 2, 0)
+            self.text_indent_edit = BodyClickableEditableComboBox()
+            self.text_indent_edit.addItems([label for label, _ in TEXT_INDENT_OPTIONS])
+            self.text_indent_edit.setMinimumWidth(140)
             grid_layout.addWidget(self.text_indent_edit, 2, 1)
         
         # 设置列拉伸
         grid_layout.setColumnStretch(1, 1)
         grid_layout.setColumnStretch(3, 1)
         
-        group.viewLayout.addWidget(grid_widget)
+        section_layout.addWidget(grid_widget)
         
         return group
     
     def create_rules_section(self):
         """创建匹配规则区域"""
-        group = HeaderCardWidget(self)
-        group.setTitle("🎯 匹配规则")
+        group = QFrame(self)
+        group.setObjectName("ConfigSection")
+
+        section_layout = QVBoxLayout(group)
+        section_layout.setContentsMargins(14, 12, 14, 12)
+        section_layout.setSpacing(8)
         
         # 添加规则按钮和说明
         header_container = QWidget()
         header_layout = QHBoxLayout(header_container)
         header_layout.setContentsMargins(0, 0, 0, 0)
-        header_layout.setSpacing(12)
+        header_layout.setSpacing(10)
+        header_layout.addWidget(StrongBodyLabel("识别规则", group))
         
-        # 说明文本
-        desc_label = CaptionLabel("配置用于识别此类型文本的正则表达式规则")
-        desc_label.setStyleSheet("color: #666666;")
-        header_layout.addWidget(desc_label)
+        rule_count = len(self.config.patterns) if self.config else 0
+        self.rule_count_label = CaptionLabel(f"已配置 {rule_count} 条规则")
+        header_layout.addWidget(self.rule_count_label)
         header_layout.addStretch()
         
-        self.add_rule_button = PrimaryPushButton("添加规则")
+        self.add_rule_button = PrimaryPushButton("从模板添加")
         self.add_rule_button.setIcon(FIF.ADD)
-        self.add_rule_button.setFixedSize(120, 32)  # 增加宽度以适应中文文字
+        self.add_rule_button.setFixedSize(128, 30)
         self.add_rule_button.clicked.connect(self.add_rule)
         header_layout.addWidget(self.add_rule_button)
         
-        group.viewLayout.addWidget(header_container)
+        section_layout.addWidget(header_container)
         
         # 规则列表容器
         self.rules_container = QWidget()
+        self.rules_container.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
         self.rules_layout = QVBoxLayout(self.rules_container)
-        self.rules_layout.setContentsMargins(0, 12, 0, 0)
-        self.rules_layout.setSpacing(12)  # 增加规则之间的间距
+        self.rules_layout.setContentsMargins(0, 0, 0, 0)
+        self.rules_layout.setSpacing(8)
+        self.rules_layout.setAlignment(Qt.AlignmentFlag.AlignTop)
         
-        group.viewLayout.addWidget(self.rules_container)
+        section_layout.addWidget(self.rules_container, 1)
         
         return group
+
+    def _template_by_id(self, template_id: str) -> RuleTemplate:
+        """按模板ID获取规则模板"""
+        for template in self._template_options():
+            if template.id == template_id:
+                return template
+        return ADVANCED_RULE_TEMPLATE
+
+    def _update_rule_count_label(self):
+        """更新规则数量提示"""
+        if not hasattr(self, 'rule_count_label'):
+            return
+        count = len([widget for widget in self.rule_widgets if widget.pattern.pattern.strip()])
+        self.rule_count_label.setText(f"已配置 {count} 条规则")
+
+    def _literal_from_exact_pattern(self, pattern: str) -> str:
+        """从简单精确匹配正则提取文本"""
+        if not pattern.startswith("^") or not pattern.endswith("$"):
+            return ""
+        literal = pattern[1:-1]
+        if re.search(r"(?<!\\)[\[\]\(\)\+\*\?\|\{\}]", literal):
+            return ""
+        return re.sub(r"\\(.)", r"\1", literal)
+
+    def _detect_rule_template(self, pattern: RegexPattern) -> tuple[str, str]:
+        """识别已有正则对应的模板"""
+        for template in RULE_TEMPLATES.get(self.level, []):
+            if template.pattern and pattern.pattern == template.pattern:
+                return template.id, ""
+
+        exact_text = self._literal_from_exact_pattern(pattern.pattern)
+        if exact_text and any(template.id == "exact_text" for template in RULE_TEMPLATES.get(self.level, [])):
+            return "exact_text", exact_text
+
+        return "advanced", pattern.pattern
+
+    def _build_pattern_from_template(self, template_id: str, parameter: str, raw_pattern: str) -> str:
+        """由用户可见模板生成底层正则"""
+        template = self._template_by_id(template_id)
+        if template.id == "advanced":
+            return raw_pattern.strip()
+        if template.id == "exact_text":
+            value = parameter.strip() or template.placeholder
+            return f"^{re.escape(value)}$"
+        return template.pattern
+
+    def _set_rule_pattern_text(self, widget: QWidget, pattern: str):
+        """更新规则正则显示，避免触发递归保存"""
+        widget.pattern_edit.blockSignals(True)
+        widget.pattern_edit.setText(pattern)
+        widget.pattern_edit.blockSignals(False)
+
+    def _update_rule_editor_state(self, widget: QWidget):
+        """根据规则类型更新输入状态"""
+        template_id = widget.template_ids[widget.type_combo.currentIndex()]
+        template = self._template_by_id(template_id)
+
+        widget.parameter_edit.setEnabled(template.parameter_required)
+        widget.parameter_edit.setVisible(template.parameter_required)
+        widget.parameter_edit.setPlaceholderText(template.placeholder or template.sample)
+        widget.pattern_edit.setReadOnly(template.id != "advanced")
+        widget.pattern_edit.setVisible(template.id == "advanced")
+        widget.pattern_edit.setPlaceholderText(template.placeholder if template.id == "advanced" else "自动生成")
+
+        if template.id != "advanced":
+            self._set_rule_pattern_text(
+                widget,
+                self._build_pattern_from_template(template.id, widget.parameter_edit.text(), widget.pattern.pattern)
+            )
+
+    def _sync_rule_widget(self, widget: QWidget):
+        """从控件状态同步到 RegexPattern"""
+        template_id = widget.template_ids[widget.type_combo.currentIndex()]
+        template = self._template_by_id(template_id)
+        raw_pattern = widget.pattern_edit.text()
+        pattern_text = self._build_pattern_from_template(template.id, widget.parameter_edit.text(), raw_pattern)
+
+        widget.pattern.enabled = widget.enabled_checkbox.isChecked()
+        widget.pattern.name = widget.name_edit.text().strip() or template.label
+        widget.pattern.pattern = pattern_text
+        widget.pattern.description = template.sample
+
+        if widget.pattern_edit.text() != pattern_text:
+            self._set_rule_pattern_text(widget, pattern_text)
+
+    def _update_rule_test_result(self, widget: QWidget):
+        """更新单条规则测试结果"""
+        sample = widget.test_edit.text().strip()
+        pattern = widget.pattern_edit.text().strip()
+
+        if not sample or not pattern:
+            widget.test_result.setText("")
+            return
+
+        try:
+            matched = re.match(pattern, sample) is not None
+        except re.error as exc:
+            widget.test_result.setText(f"规则错误: {exc}")
+            widget.test_result.setStyleSheet("color: #e74c3c;")
+            return
+
+        if matched:
+            widget.test_result.setText("匹配")
+            widget.test_result.setStyleSheet("color: #16a34a;")
+        else:
+            widget.test_result.setText("不匹配")
+            widget.test_result.setStyleSheet("color: #888888;")
     
     def create_rule_widget(self, pattern: RegexPattern):
         """创建单个规则组件"""
-        rule_widget = CardWidget()  # 使用CardWidget增强视觉效果
-        rule_widget.setBorderRadius(8)
-        rule_widget.setFixedHeight(80)  # 增加高度以适应新布局
+        rule_widget = QFrame()
+        rule_widget.setObjectName("RuleWidget")
+        rule_widget.setMinimumHeight(54)
+        rule_widget.setMaximumHeight(60)
         
-        layout = QVBoxLayout(rule_widget)
-        layout.setContentsMargins(16, 12, 16, 12)
+        layout = QHBoxLayout(rule_widget)
+        layout.setContentsMargins(10, 8, 10, 8)
         layout.setSpacing(8)
-        
-        # 第一行：复选框和规则名称
-        top_row = QWidget()
-        top_layout = QHBoxLayout(top_row)
-        top_layout.setContentsMargins(0, 0, 0, 0)
-        top_layout.setSpacing(12)
         
         # 启用复选框
         enabled_checkbox = CheckBox()
         enabled_checkbox.setChecked(pattern.enabled)
-        top_layout.addWidget(enabled_checkbox)
+        enabled_checkbox.setToolTip("启用规则")
+        enabled_checkbox.setFixedWidth(26)
+        layout.addWidget(enabled_checkbox)
         
         # 规则名称
         name_edit = LineEdit()
         name_edit.setText(pattern.name)
         name_edit.setPlaceholderText("规则名称")
-        name_edit.setFixedWidth(150)
-        top_layout.addWidget(name_edit)
-        
-        top_layout.addStretch()
-        
-        # 删除按钮
-        remove_button = TransparentPushButton("删除")
-        remove_button.setIcon(FIF.DELETE)
-        remove_button.setFixedSize(80, 28)  # 增加宽度以适应中文文字
-        remove_button.setToolTip("删除规则")
-        self.update_remove_button_style(remove_button)
-        top_layout.addWidget(remove_button)
-        
-        layout.addWidget(top_row)
-        
-        # 第二行：正则表达式
+        name_edit.setFixedWidth(132)
+        layout.addWidget(name_edit)
+
+        template_id, parameter = self._detect_rule_template(pattern)
+        template_options = self._template_options()
+        template_ids = [template.id for template in template_options]
+
+        type_combo = BodyClickableComboBox()
+        type_combo.addItems([template.label for template in template_options])
+        type_combo.setFixedWidth(140)
+        if template_id in template_ids:
+            type_combo.setCurrentIndex(template_ids.index(template_id))
+        layout.addWidget(type_combo)
+
+        parameter_edit = LineEdit()
+        parameter_edit.setText(parameter if template_id == "exact_text" else "")
+        parameter_edit.setPlaceholderText("匹配文本")
+        parameter_edit.setFixedWidth(150)
+        layout.addWidget(parameter_edit)
+
         pattern_edit = LineEdit()
         pattern_edit.setText(pattern.pattern)
-        pattern_edit.setPlaceholderText("输入正则表达式，如：^第[一二三四五六七八九十]+章")
+        pattern_edit.setPlaceholderText("生成的正则表达式")
+        pattern_edit.setMinimumWidth(200)
+        pattern_edit.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
         layout.addWidget(pattern_edit)
+
+        test_edit = LineEdit()
+        test_edit.setPlaceholderText("测试文本")
+        test_edit.setMinimumWidth(150)
+        test_edit.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+        layout.addWidget(test_edit)
+
+        test_result = CaptionLabel("")
+        test_result.setFixedWidth(66)
+        layout.addWidget(test_result)
+        
+        # 删除按钮
+        remove_button = TransparentPushButton()
+        remove_button.setIcon(FIF.DELETE)
+        remove_button.setFixedSize(32, 30)
+        remove_button.setToolTip("删除规则")
+        self.update_remove_button_style(remove_button)
+        layout.addWidget(remove_button)
         
         # 为规则组件添加样式
         self.apply_rule_widget_style(rule_widget)
@@ -226,14 +523,24 @@ class TitleLevelCard(CardWidget):
         rule_widget.pattern = pattern
         rule_widget.enabled_checkbox = enabled_checkbox
         rule_widget.name_edit = name_edit
+        rule_widget.type_combo = type_combo
+        rule_widget.template_ids = template_ids
+        rule_widget.parameter_edit = parameter_edit
         rule_widget.pattern_edit = pattern_edit
+        rule_widget.test_edit = test_edit
+        rule_widget.test_result = test_result
         rule_widget.remove_button = remove_button
         
         # 连接信号
-        enabled_checkbox.stateChanged.connect(self.on_rule_changed)
-        name_edit.textChanged.connect(self.on_rule_changed)
-        pattern_edit.textChanged.connect(self.on_rule_changed)
+        enabled_checkbox.stateChanged.connect(lambda *_: self.on_rule_changed())
+        name_edit.textChanged.connect(lambda *_: self.on_rule_changed())
+        type_combo.currentIndexChanged.connect(lambda *_: self.on_rule_changed())
+        parameter_edit.textChanged.connect(lambda *_: self.on_rule_changed())
+        pattern_edit.textChanged.connect(lambda *_: self.on_rule_changed())
+        test_edit.textChanged.connect(lambda *_: self._update_rule_test_result(rule_widget))
         remove_button.clicked.connect(lambda: self.remove_rule(rule_widget))
+
+        self._update_rule_editor_state(rule_widget)
         
         return rule_widget
     
@@ -284,12 +591,12 @@ class TitleLevelCard(CardWidget):
         """为规则组件应用样式"""
         # 浅色主题样式
         light_qss = """
-            QWidget {
+            QFrame#RuleWidget {
                 background-color: #f8f9fa;
                 border: 1px solid #e9ecef;
                 border-radius: 6px;
             }
-            QWidget:hover {
+            QFrame#RuleWidget:hover {
                 border-color: #ced4da;
                 background-color: #f1f3f4;
             }
@@ -297,12 +604,12 @@ class TitleLevelCard(CardWidget):
         
         # 深色主题样式
         dark_qss = """
-            QWidget {
+            QFrame#RuleWidget {
                 background-color: #3c4043;
                 border: 1px solid #5f6368;
                 border-radius: 6px;
             }
-            QWidget:hover {
+            QFrame#RuleWidget:hover {
                 border-color: #8ab4f8;
                 background-color: #484a4d;
             }
@@ -356,26 +663,26 @@ class TitleLevelCard(CardWidget):
         light_qss = """
             TitleLevelCard {
                 border: 1px solid rgba(0, 0, 0, 0.08);
-                border-radius: 12px;
+                border-radius: 8px;
                 background-color: #ffffff;
-                box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
             }
-            TitleLevelCard:hover {
-                border-color: rgba(0, 120, 215, 0.3);
-                box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+            TitleLevelCard QFrame#ConfigSection {
+                border: 1px solid rgba(0, 0, 0, 0.08);
+                border-radius: 8px;
+                background-color: #fbfbfc;
             }
         """
         
         dark_qss = """
             TitleLevelCard {
                 border: 1px solid rgba(255, 255, 255, 0.1);
-                border-radius: 12px;
+                border-radius: 8px;
                 background-color: #2d3748;
-                box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
             }
-            TitleLevelCard:hover {
-                border-color: rgba(100, 200, 255, 0.4);
-                box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
+            TitleLevelCard QFrame#ConfigSection {
+                border: 1px solid rgba(255, 255, 255, 0.10);
+                border-radius: 8px;
+                background-color: #263241;
             }
         """
         
@@ -410,26 +717,15 @@ class TitleLevelCard(CardWidget):
         
         # 加载样式配置
         style = self.config.style
-        self.font_family_edit.setText(style.font_family)
-        self.font_size_edit.setText(style.font_size)
-        
-        # 设置粗细
-        weight_index = self.font_weight_combo.findText(style.font_weight)
-        if weight_index >= 0:
-            self.font_weight_combo.setCurrentIndex(weight_index)
-        
-        # 设置对齐方式
-        alignment_index = self.alignment_combo.findText(style.alignment)
-        if alignment_index >= 0:
-            self.alignment_combo.setCurrentIndex(alignment_index)
+        self._set_combo_text(self.font_family_edit, style.font_family)
+        self._set_mapped_combo(self.font_size_edit, FONT_SIZE_OPTIONS, style.font_size)
+        self._set_mapped_combo(self.font_weight_combo, FONT_WEIGHT_OPTIONS, style.font_weight)
+        self._set_mapped_combo(self.alignment_combo, ALIGNMENT_OPTIONS, style.alignment)
         
         # 设置首行缩进（仅正文）
         if self.level == 'normal' and hasattr(self, 'text_indent_edit'):
-            self.text_indent_edit.setText(style.text_indent)
+            self._set_mapped_combo(self.text_indent_edit, TEXT_INDENT_OPTIONS, style.text_indent)
         
-        # 加载匹配规则
-        if self.level in ['h1', 'h2', 'h3', 'special_format']:
-            self.load_rules()
     
     def load_rules(self):
         """加载匹配规则"""
@@ -441,6 +737,7 @@ class TitleLevelCard(CardWidget):
             rule_widget = self.create_rule_widget(pattern)
             self.rule_widgets.append(rule_widget)
             self.rules_layout.addWidget(rule_widget)
+        self._update_rule_count_label()
         
     
     def clear_rules(self):
@@ -451,16 +748,18 @@ class TitleLevelCard(CardWidget):
     
     def add_rule(self):
         """添加新规则"""
+        template = RULE_TEMPLATES.get(self.level, [ADVANCED_RULE_TEMPLATE])[0]
         new_pattern = RegexPattern(
-            pattern="",
-            name=f"新规则{len(self.rule_widgets) + 1}",
+            pattern=template.pattern,
+            name=template.label,
             enabled=True,
-            description=""
+            description=template.sample
         )
         
         rule_widget = self.create_rule_widget(new_pattern)
         self.rule_widgets.append(rule_widget)
         self.rules_layout.addWidget(rule_widget)
+        self.on_rule_changed()
     
     def remove_rule(self, rule_widget):
         """删除规则并保存配置"""
@@ -470,6 +769,7 @@ class TitleLevelCard(CardWidget):
             
             # 删除规则后立即保存配置
             try:
+                self._update_rule_count_label()
                 self.save_config_silent()
                 print(f"规则已删除并保存，剩余规则数量: {len(self.rule_widgets)}")
             except Exception as e:
@@ -478,9 +778,10 @@ class TitleLevelCard(CardWidget):
     def on_rule_changed(self):
         """规则改变时更新数据并自动保存"""
         for widget in self.rule_widgets:
-            widget.pattern.enabled = widget.enabled_checkbox.isChecked()
-            widget.pattern.name = widget.name_edit.text().strip()
-            widget.pattern.pattern = widget.pattern_edit.text().strip()
+            self._update_rule_editor_state(widget)
+            self._sync_rule_widget(widget)
+            self._update_rule_test_result(widget)
+        self._update_rule_count_label()
         
         # 实时保存配置变化
         try:
@@ -493,30 +794,580 @@ class TitleLevelCard(CardWidget):
         try:
             # 保存样式配置
             style = StyleConfig(
-                font_family=self.font_family_edit.text().strip(),
-                font_size=self.font_size_edit.text().strip(),
+                font_family=self._combo_text(self.font_family_edit),
+                font_size=self._mapped_combo_value(self.font_size_edit, FONT_SIZE_OPTIONS),
                 font_kerning="1.0000pt",  # 固定值
-                font_weight=self.font_weight_combo.currentText(),
-                alignment=self.alignment_combo.currentText(),
-                text_indent=getattr(self, 'text_indent_edit', None) and self.text_indent_edit.text().strip() or "0.0000pt",
+                font_weight=self._mapped_combo_value(self.font_weight_combo, FONT_WEIGHT_OPTIONS),
+                alignment=self._mapped_combo_value(self.alignment_combo, ALIGNMENT_OPTIONS),
+                text_indent=(
+                    hasattr(self, 'text_indent_edit')
+                    and self._mapped_combo_value(self.text_indent_edit, TEXT_INDENT_OPTIONS)
+                    or "0.0000pt"
+                ),
                 description=""
             )
             
-            # 收集匹配规则
-            patterns = None
-            if self.level in ['h1', 'h2', 'h3', 'special_format']:
-                patterns = []
-                for widget in self.rule_widgets:
-                    if widget.pattern.pattern.strip():  # 只保存非空的模式
-                        patterns.append(widget.pattern)
-            
-            # 批量更新配置（避免重复保存）
-            user_config_manager.update_level_config(self.level, style, patterns)
+            # 识别规则由独立的语义规则页保存；样式页不覆盖旧正则兼容字段。
+            user_config_manager.update_level_config(self.level, style, None)
             
             self.config_changed.emit(self.level)
             
         except Exception as e:
             raise e
+
+
+class RecognitionRulesCard(CardWidget):
+    """语义识别规则配置卡片"""
+
+    config_changed = pyqtSignal()
+
+    TARGET_OPTIONS = [
+        ("关闭", "disabled"),
+        ("一级标题", "h1"),
+        ("二级标题", "h2"),
+        ("三级标题", "h3"),
+        ("特殊格式", "special_format"),
+    ]
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.rule_widgets = []
+        self._loading = False
+        self.setup_ui()
+        self.load_config()
+        self.apply_card_style()
+
+    def setup_ui(self):
+        """设置识别规则配置界面"""
+        self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(14, 12, 14, 12)
+        layout.setSpacing(10)
+
+        title_row = QWidget(self)
+        title_layout = QHBoxLayout(title_row)
+        title_layout.setContentsMargins(0, 0, 0, 0)
+        title_layout.setSpacing(10)
+
+        icon_widget = IconWidget(FIF.TAG, self)
+        icon_widget.setFixedSize(20, 20)
+        title_layout.addWidget(icon_widget)
+
+        title_layout.addWidget(SubtitleLabel("识别规则", self))
+        title_layout.addStretch()
+        layout.addWidget(title_row)
+
+        rules_section = QFrame(self)
+        rules_section.setObjectName("ConfigSection")
+        rules_layout = QVBoxLayout(rules_section)
+        rules_layout.setContentsMargins(12, 10, 12, 10)
+        rules_layout.setSpacing(6)
+        rules_layout.addWidget(StrongBodyLabel("规则分配", rules_section))
+
+        self.rules_container = QWidget(rules_section)
+        self.rules_layout = QVBoxLayout(self.rules_container)
+        self.rules_layout.setContentsMargins(0, 0, 0, 0)
+        self.rules_layout.setSpacing(6)
+        self.rules_layout.setAlignment(Qt.AlignmentFlag.AlignTop)
+        rules_layout.addWidget(self.rules_container, 1)
+        layout.addWidget(rules_section, 1)
+
+        test_section = QFrame(self)
+        test_section.setObjectName("ConfigSection")
+        test_layout = QVBoxLayout(test_section)
+        test_layout.setContentsMargins(12, 10, 12, 10)
+        test_layout.setSpacing(6)
+
+        test_header = QWidget(test_section)
+        test_header_layout = QHBoxLayout(test_header)
+        test_header_layout.setContentsMargins(0, 0, 0, 0)
+        test_header_layout.addWidget(StrongBodyLabel("测试文本", test_section))
+        test_header_layout.addStretch()
+        test_layout.addWidget(test_header)
+
+        self.test_edit = TextEdit(test_section)
+        self.test_edit.setPlaceholderText("第一章 总则\n第一节 适用范围\n（一）政策支持")
+        self.test_edit.setFixedHeight(70)
+        self.test_edit.textChanged.connect(self.refresh_test_results)
+        test_layout.addWidget(self.test_edit)
+
+        self.test_result_container = QWidget(test_section)
+        self.test_result_layout = QVBoxLayout(self.test_result_container)
+        self.test_result_layout.setContentsMargins(0, 0, 0, 0)
+        self.test_result_layout.setSpacing(4)
+        test_layout.addWidget(self.test_result_container)
+
+        layout.addWidget(test_section)
+
+    def _sample_text(self, rule: RecognitionRule) -> str:
+        """获取规则示例文本"""
+        sample = rule.params.get("sample", "")
+        if sample:
+            return str(sample)
+        samples = {
+            "chapter": "第一章 总则",
+            "section": "第一节 基本情况",
+            "chinese_list": "一、总体要求",
+            "chinese_parentheses": "（一）政策支持",
+            "arabic_comma": "1、项目背景",
+            "arabic_dot": "1. Project background",
+            "prefix_symbol": "技术创新能力：正文内容",
+        }
+        return samples.get(rule.matcher_type, "")
+
+    def _target_index(self, target_level: str) -> int:
+        """获取输出级别在下拉框中的位置"""
+        for index, (_, value) in enumerate(self.TARGET_OPTIONS):
+            if value == target_level:
+                return index
+        return 0
+
+    def _target_value(self, combo: ComboBox) -> str:
+        """读取输出级别保存值"""
+        index = combo.currentIndex()
+        if 0 <= index < len(self.TARGET_OPTIONS):
+            return self.TARGET_OPTIONS[index][1]
+        return "disabled"
+
+    def _clear_layout(self, layout: QVBoxLayout):
+        """清空布局中的组件"""
+        while layout.count():
+            item = layout.takeAt(0)
+            widget = item.widget()
+            if widget:
+                widget.deleteLater()
+
+    def load_config(self):
+        """加载语义识别规则"""
+        self._loading = True
+        self._clear_layout(self.rules_layout)
+        self.rule_widgets.clear()
+
+        for rule in user_config_manager.get_recognition_rules():
+            rule_widget = self.create_rule_widget(rule)
+            self.rule_widgets.append(rule_widget)
+            self.rules_layout.addWidget(rule_widget)
+
+        self._loading = False
+        self.refresh_test_results()
+
+    def create_rule_widget(self, rule: RecognitionRule):
+        """创建单条语义规则行"""
+        rule_widget = QFrame(self)
+        rule_widget.setObjectName("RecognitionRuleRow")
+        rule_widget.rule = rule
+
+        outer_layout = QVBoxLayout(rule_widget)
+        outer_layout.setContentsMargins(8, 6, 8, 6)
+        outer_layout.setSpacing(4)
+
+        row_container = QWidget(rule_widget)
+        row_layout = QHBoxLayout(row_container)
+        row_layout.setContentsMargins(0, 0, 0, 0)
+        row_layout.setSpacing(8)
+        outer_layout.addWidget(row_container)
+
+        info_container = QWidget(rule_widget)
+        info_layout = QVBoxLayout(info_container)
+        info_layout.setContentsMargins(0, 0, 0, 0)
+        info_layout.setSpacing(2)
+        info_layout.addWidget(StrongBodyLabel(rule.name, rule_widget))
+
+        sample_label = CaptionLabel(f"示例：{self._sample_text(rule)}", rule_widget)
+        sample_label.setStyleSheet("color: #777777;")
+        info_layout.addWidget(sample_label)
+        row_layout.addWidget(info_container, 1)
+
+        row_layout.addWidget(BodyLabel("识别为", rule_widget))
+        target_combo = BodyClickableComboBox(rule_widget)
+        target_combo.addItems([label for label, _ in self.TARGET_OPTIONS])
+        target_combo.setFixedWidth(104)
+        target_combo.setCurrentIndex(self._target_index(rule.target_level if rule.enabled else "disabled"))
+        target_combo.currentIndexChanged.connect(lambda *_: self.save_config_silent())
+        row_layout.addWidget(target_combo)
+        rule_widget.target_combo = target_combo
+
+        rule_widget.delimiter_checks = {}
+        rule_widget.custom_delimiter_edit = None
+
+        if rule.matcher_type == "prefix_symbol":
+            delimiters_container = QWidget(rule_widget)
+            delimiters_layout = QHBoxLayout(delimiters_container)
+            delimiters_layout.setContentsMargins(0, 0, 0, 0)
+            delimiters_layout.setSpacing(6)
+            delimiters_layout.addSpacing(2)
+
+            selected_delimiters = set(rule.params.get("delimiters", []))
+            for delimiter in SEGMENT_DELIMITER_OPTIONS:
+                checkbox = CheckBox(delimiter, rule_widget)
+                checkbox.setChecked(delimiter in selected_delimiters)
+                checkbox.stateChanged.connect(lambda *_: self.save_config_silent())
+                delimiters_layout.addWidget(checkbox)
+                rule_widget.delimiter_checks[delimiter] = checkbox
+
+            custom_edit = LineEdit(rule_widget)
+            custom_edit.setPlaceholderText("自定义")
+            custom_edit.setText(str(rule.params.get("custom_delimiter", "")))
+            custom_edit.setFixedWidth(80)
+            custom_edit.textChanged.connect(lambda *_: self.save_config_silent())
+            delimiters_layout.addWidget(custom_edit)
+            rule_widget.custom_delimiter_edit = custom_edit
+            delimiters_layout.addStretch()
+            outer_layout.addWidget(delimiters_container)
+
+        return rule_widget
+
+    def save_config_silent(self):
+        """保存语义识别规则"""
+        if self._loading:
+            return
+
+        rules = []
+        for index, widget in enumerate(self.rule_widgets):
+            rule = widget.rule
+            target_level = self._target_value(widget.target_combo)
+            params = dict(rule.params)
+
+            if rule.matcher_type == "prefix_symbol":
+                params["delimiters"] = [
+                    delimiter for delimiter, checkbox in widget.delimiter_checks.items()
+                    if checkbox.isChecked()
+                ]
+                if widget.custom_delimiter_edit:
+                    params["custom_delimiter"] = widget.custom_delimiter_edit.text().strip()
+
+            rules.append(RecognitionRule(
+                id=rule.id,
+                name=rule.name,
+                matcher_type=rule.matcher_type,
+                target_level=target_level,
+                enabled=target_level != "disabled",
+                priority=index * 10 + 10,
+                params=params,
+            ))
+
+        user_config_manager.update_recognition_rules(rules)
+        self.config_changed.emit()
+        self.refresh_test_results()
+
+    def refresh_test_results(self):
+        """刷新测试文本的识别结果"""
+        if not hasattr(self, 'test_result_layout'):
+            return
+
+        self._clear_layout(self.test_result_layout)
+        text = self.test_edit.toPlainText().strip() if hasattr(self, 'test_edit') else ""
+        if not text:
+            empty_label = CaptionLabel("输入测试文本后会显示命中规则", self)
+            empty_label.setStyleSheet("color: #888888;")
+            self.test_result_layout.addWidget(empty_label)
+            return
+
+        enabled_levels = {"h1", "h2", "h3", "special_format"}
+        for line_number, line in enumerate([item.strip() for item in text.splitlines() if item.strip()], 1):
+            match = user_config_manager.classify_line(line, enabled_levels)
+            if match:
+                label = RECOGNITION_TARGET_LABELS.get(match.target_level, match.target_level)
+                if match.target_level == "special_format" and match.remaining_text:
+                    result_text = (
+                        f"{line_number}. {label} · {match.rule_name}："
+                        f"重点“{match.matched_text}”，正文“{match.remaining_text}”"
+                    )
+                else:
+                    result_text = f"{line_number}. {label} · {match.rule_name}：{line}"
+            else:
+                result_text = f"{line_number}. 正文 · 未命中规则：{line}"
+
+            result_label = CaptionLabel(result_text, self)
+            result_label.setWordWrap(True)
+            self.test_result_layout.addWidget(result_label)
+
+    def apply_card_style(self):
+        """为识别规则卡片应用样式"""
+        light_qss = """
+            RecognitionRulesCard {
+                border: 1px solid rgba(0, 0, 0, 0.08);
+                border-radius: 8px;
+                background-color: #ffffff;
+            }
+            RecognitionRulesCard QFrame#ConfigSection {
+                border: 1px solid rgba(0, 0, 0, 0.08);
+                border-radius: 8px;
+                background-color: #fbfbfc;
+            }
+            QFrame#RecognitionRuleRow {
+                border: 1px solid rgba(0, 0, 0, 0.08);
+                border-radius: 6px;
+                background-color: #ffffff;
+            }
+        """
+
+        dark_qss = """
+            RecognitionRulesCard {
+                border: 1px solid rgba(255, 255, 255, 0.1);
+                border-radius: 8px;
+                background-color: #2d3748;
+            }
+            RecognitionRulesCard QFrame#ConfigSection {
+                border: 1px solid rgba(255, 255, 255, 0.10);
+                border-radius: 8px;
+                background-color: #263241;
+            }
+            QFrame#RecognitionRuleRow {
+                border: 1px solid rgba(255, 255, 255, 0.10);
+                border-radius: 6px;
+                background-color: #1f2937;
+            }
+        """
+
+        setCustomStyleSheet(self, light_qss, dark_qss)
+
+
+class StyleOverviewCard(CardWidget):
+    """全部文档格式的紧凑样式设置卡片"""
+
+    config_changed = pyqtSignal(str)
+
+    LEVELS = [
+        ("h1", "一级标题", FIF.LABEL),
+        ("h2", "二级标题", FIF.TAG),
+        ("h3", "三级标题", FIF.BOOK_SHELF),
+        ("normal", "正文", FIF.DOCUMENT),
+        ("special_format", "特殊格式", FIF.PALETTE),
+    ]
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.rows = {}
+        self._loading = False
+        self.setup_ui()
+        self.load_config()
+        self.apply_card_style()
+
+    def setup_ui(self):
+        """设置样式总表界面"""
+        self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+        self.setMinimumWidth(0)
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(14, 12, 14, 12)
+        layout.setSpacing(8)
+
+        title_row = QWidget(self)
+        title_layout = QHBoxLayout(title_row)
+        title_layout.setContentsMargins(0, 0, 0, 0)
+        title_layout.setSpacing(10)
+
+        icon_widget = IconWidget(FIF.FONT, self)
+        icon_widget.setFixedSize(20, 20)
+        title_layout.addWidget(icon_widget)
+        title_layout.addWidget(SubtitleLabel("格式设置", self))
+        title_layout.addStretch()
+        layout.addWidget(title_row)
+
+        table_frame = QFrame(self)
+        table_frame.setObjectName("StyleTable")
+        table_layout = QVBoxLayout(table_frame)
+        table_layout.setContentsMargins(12, 10, 12, 10)
+        table_layout.setSpacing(8)
+
+        for level, title, icon in self.LEVELS:
+            style_row = QFrame(table_frame)
+            style_row.setObjectName("StyleRow")
+            row_layout = QHBoxLayout(style_row)
+            row_layout.setContentsMargins(10, 8, 10, 8)
+            row_layout.setSpacing(10)
+
+            level_label = self._create_level_label(title, icon, style_row)
+            level_label.setFixedWidth(78)
+            row_layout.addWidget(level_label)
+
+            controls_widget = QWidget(style_row)
+            controls_layout = QGridLayout(controls_widget)
+            controls_layout.setContentsMargins(0, 0, 0, 0)
+            controls_layout.setHorizontalSpacing(8)
+            controls_layout.setVerticalSpacing(6)
+
+            font_family_edit = BodyClickableEditableComboBox(style_row)
+            font_family_edit.addItems(FONT_FAMILY_OPTIONS)
+            font_family_edit.setMinimumWidth(180)
+            font_family_edit.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+            self._add_setting_cell(controls_layout, 0, 0, "字体", font_family_edit, style_row)
+
+            font_size_edit = BodyClickableEditableComboBox(style_row)
+            font_size_edit.addItems([label for label, _ in FONT_SIZE_OPTIONS])
+            font_size_edit.setMinimumWidth(132)
+            self._add_setting_cell(controls_layout, 0, 2, "字号", font_size_edit, style_row)
+
+            font_weight_combo = BodyClickableComboBox(style_row)
+            font_weight_combo.addItems([label for label, _ in FONT_WEIGHT_OPTIONS])
+            font_weight_combo.setMinimumWidth(84)
+            self._add_setting_cell(controls_layout, 1, 0, "粗细", font_weight_combo, style_row)
+
+            alignment_combo = BodyClickableComboBox(style_row)
+            alignment_combo.addItems([label for label, _ in ALIGNMENT_OPTIONS])
+            alignment_combo.setMinimumWidth(96)
+            self._add_setting_cell(controls_layout, 1, 2, "对齐", alignment_combo, style_row)
+
+            text_indent_edit = None
+            if level == "normal":
+                text_indent_edit = BodyClickableEditableComboBox(style_row)
+                text_indent_edit.addItems([label for label, _ in TEXT_INDENT_OPTIONS])
+                text_indent_edit.setMinimumWidth(128)
+                self._add_setting_cell(controls_layout, 1, 4, "缩进", text_indent_edit, style_row)
+
+            controls_layout.setColumnStretch(1, 2)
+            controls_layout.setColumnStretch(3, 1)
+            controls_layout.setColumnStretch(5, 1)
+            row_layout.addWidget(controls_widget, 1)
+            table_layout.addWidget(style_row)
+
+            self.rows[level] = {
+                "title": title,
+                "font_family": font_family_edit,
+                "font_size": font_size_edit,
+                "font_weight": font_weight_combo,
+                "alignment": alignment_combo,
+                "text_indent": text_indent_edit,
+            }
+
+            for combo in (
+                font_family_edit,
+                font_size_edit,
+                font_weight_combo,
+                alignment_combo,
+                text_indent_edit,
+            ):
+                if combo:
+                    combo.currentTextChanged.connect(lambda *_: self.save_config_silent())
+
+        layout.addWidget(table_frame)
+
+    def _add_setting_cell(self, layout: QGridLayout, row: int, column: int, label_text: str, widget, parent):
+        """添加一组紧凑的字段标签和控件"""
+        label = CaptionLabel(label_text, parent)
+        label.setStyleSheet("color: #777777;")
+        layout.addWidget(label, row, column)
+        layout.addWidget(widget, row, column + 1)
+
+    def _create_level_label(self, title: str, icon, parent):
+        """创建格式级别标签"""
+        container = QWidget(parent)
+        layout = QHBoxLayout(container)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(6)
+
+        icon_widget = IconWidget(icon, parent)
+        icon_widget.setFixedSize(16, 16)
+        layout.addWidget(icon_widget)
+        layout.addWidget(BodyLabel(title, parent))
+        layout.addStretch()
+        return container
+
+    def _set_combo_text(self, combo: ComboBox, value: str):
+        """设置下拉框文本"""
+        index = combo.findText(value)
+        if index >= 0:
+            combo.setCurrentIndex(index)
+        elif hasattr(combo, 'setText'):
+            combo.setText(value)
+
+    def _set_mapped_combo(self, combo: ComboBox, options: list[tuple[str, str]], value: str):
+        """按保存值设置映射下拉框"""
+        for index, (_, option_value) in enumerate(options):
+            if option_value == value:
+                combo.setCurrentIndex(index)
+                return
+        self._set_combo_text(combo, value)
+
+    def _combo_text(self, combo: ComboBox) -> str:
+        """读取下拉框当前文本"""
+        return combo.currentText().strip()
+
+    def _mapped_combo_value(self, combo: ComboBox, options: list[tuple[str, str]]) -> str:
+        """读取映射下拉框保存值"""
+        current_text = combo.currentText().strip()
+        for label, value in options:
+            if current_text == label:
+                return value
+        return current_text
+
+    def load_config(self):
+        """加载全部样式配置"""
+        self._loading = True
+        for level, widgets in self.rows.items():
+            config = user_config_manager.get_config(level)
+            style = config.style
+            self._set_combo_text(widgets["font_family"], style.font_family)
+            self._set_mapped_combo(widgets["font_size"], FONT_SIZE_OPTIONS, style.font_size)
+            self._set_mapped_combo(widgets["font_weight"], FONT_WEIGHT_OPTIONS, style.font_weight)
+            self._set_mapped_combo(widgets["alignment"], ALIGNMENT_OPTIONS, style.alignment)
+            if widgets["text_indent"]:
+                self._set_mapped_combo(widgets["text_indent"], TEXT_INDENT_OPTIONS, style.text_indent)
+        self._loading = False
+
+    def save_config_silent(self):
+        """保存全部样式配置"""
+        if self._loading:
+            return
+
+        for level, widgets in self.rows.items():
+            current_style = user_config_manager.get_config(level).style
+            text_indent = current_style.text_indent
+            if widgets["text_indent"]:
+                text_indent = self._mapped_combo_value(widgets["text_indent"], TEXT_INDENT_OPTIONS)
+
+            style = StyleConfig(
+                font_family=self._combo_text(widgets["font_family"]),
+                font_size=self._mapped_combo_value(widgets["font_size"], FONT_SIZE_OPTIONS),
+                font_kerning=current_style.font_kerning,
+                font_weight=self._mapped_combo_value(widgets["font_weight"], FONT_WEIGHT_OPTIONS),
+                alignment=self._mapped_combo_value(widgets["alignment"], ALIGNMENT_OPTIONS),
+                text_indent=text_indent,
+                description=current_style.description,
+            )
+            user_config_manager.update_level_config(level, style, None)
+            self.config_changed.emit(level)
+
+    def apply_card_style(self):
+        """为样式总表卡片应用样式"""
+        light_qss = """
+            StyleOverviewCard {
+                border: 1px solid rgba(0, 0, 0, 0.08);
+                border-radius: 8px;
+                background-color: #ffffff;
+            }
+            StyleOverviewCard QFrame#StyleTable {
+                border: 1px solid rgba(0, 0, 0, 0.08);
+                border-radius: 8px;
+                background-color: #fbfbfc;
+            }
+            StyleOverviewCard QFrame#StyleRow {
+                border: 1px solid rgba(0, 0, 0, 0.06);
+                border-radius: 6px;
+                background-color: #ffffff;
+            }
+        """
+
+        dark_qss = """
+            StyleOverviewCard {
+                border: 1px solid rgba(255, 255, 255, 0.1);
+                border-radius: 8px;
+                background-color: #2d3748;
+            }
+            StyleOverviewCard QFrame#StyleTable {
+                border: 1px solid rgba(255, 255, 255, 0.10);
+                border-radius: 8px;
+                background-color: #263241;
+            }
+            StyleOverviewCard QFrame#StyleRow {
+                border: 1px solid rgba(255, 255, 255, 0.10);
+                border-radius: 6px;
+                background-color: #1f2937;
+            }
+        """
+
+        setCustomStyleSheet(self, light_qss, dark_qss)
 
 
 class ConfigInterface(QWidget):
@@ -531,89 +1382,137 @@ class ConfigInterface(QWidget):
     def setup_ui(self):
         """设置主界面"""
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(32, 32, 32, 32)
-        layout.setSpacing(0)  # 使用0间距，让滚动区域完全填充
+        layout.setContentsMargins(18, 16, 18, 18)
+        layout.setSpacing(10)
         
         # 添加页面标题
         page_title = TitleLabel("文档格式配置")
-        page_title.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        page_title.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
         self.apply_page_title_style(page_title)
         layout.addWidget(page_title)
-        layout.addSpacing(24)  # 标题下方间距
+
+        self.config_panel = CardWidget()
+        self.config_panel.setObjectName("ConfigPanel")
+        self.config_panel.setBorderRadius(8)
+        panel_layout = QVBoxLayout(self.config_panel)
+        panel_layout.setContentsMargins(14, 12, 14, 12)
+        panel_layout.setSpacing(12)
+
+        body_container = QWidget()
+        body_layout = QHBoxLayout(body_container)
+        body_layout.setContentsMargins(0, 0, 0, 0)
+        body_layout.setSpacing(12)
+
+        self.nav_buttons = {}
+        self.config_stack_keys = []
+        self.config_stack = None
+
+        self.rules_card = RecognitionRulesCard()
+        self.rules_card.setMinimumWidth(470)
+        self.rules_card.config_changed.connect(lambda: self.on_config_changed("recognition_rules"))
+        body_layout.addWidget(self.rules_card, 1)
+
+        right_column = QWidget()
+        right_layout = QVBoxLayout(right_column)
+        right_layout.setContentsMargins(0, 0, 0, 0)
+        right_layout.setSpacing(12)
+
+        self.style_card = StyleOverviewCard()
+        self.style_card.config_changed.connect(self.on_config_changed)
+        right_layout.addWidget(self.style_card)
+
+        right_layout.addStretch()
+        self.setup_save_button(right_layout)
+        body_layout.addWidget(right_column)
+
+        panel_layout.addWidget(body_container, 1)
+
+        self.config_cards = {}
+        layout.addWidget(self.config_panel, 1)
+        self.apply_panel_style()
         
-        # 创建滚动区域
-        self.scroll = ScrollArea()
-        self.scroll_content = QWidget()
-        scroll_layout = QVBoxLayout(self.scroll_content)
-        scroll_layout.setContentsMargins(16, 16, 16, 16)  # 滚动内容内边距
-        scroll_layout.setSpacing(24)  # 卡片间距
-        
-        # 1. 应用设置
-        self.app_settings_card = self.create_app_settings_section()
-        scroll_layout.addWidget(self.app_settings_card)
-        
-        # 2. 一级标题设置
-        self.h1_card = self.create_title_settings_section("h1", "一级标题", FIF.LABEL)
-        scroll_layout.addWidget(self.h1_card)
-        
-        # 3. 二级标题设置
-        self.h2_card = self.create_title_settings_section("h2", "二级标题", FIF.TAG)
-        scroll_layout.addWidget(self.h2_card)
-        
-        # 4. 三级标题设置
-        self.h3_card = self.create_title_settings_section("h3", "三级标题", FIF.BOOK_SHELF)
-        scroll_layout.addWidget(self.h3_card)
-        
-        # 5. 正文设置
-        self.normal_card = self.create_text_settings_section("normal", "正文", FIF.DOCUMENT)
-        scroll_layout.addWidget(self.normal_card)
-        
-        # 6. 特殊格式设置
-        self.special_card = self.create_title_settings_section("special_format", "特殊格式", FIF.PALETTE)
-        scroll_layout.addWidget(self.special_card)
-        
-        # 保存配置引用以便后续操作
-        self.config_cards = {
-            'h1': self.h1_card,
-            'h2': self.h2_card,
-            'h3': self.h3_card,
-            'normal': self.normal_card,
-            'special_format': self.special_card
-        }
-        
-        # 设置滚动区域
-        self.scroll.setWidget(self.scroll_content)
-        self.scroll.setWidgetResizable(True)
-        layout.addWidget(self.scroll)
-        
-        # 应用滚动区域的特殊样式
-        self.apply_scroll_area_style()
-        
-        # 底部保存按钮
-        layout.addSpacing(16)
-        self.setup_save_button(layout)
-        
-        # 加载界面设置
         self.load_ui_settings()
+
+    def switch_config_section(self, route_key: str):
+        """切换配置分类"""
+        if route_key not in self.config_stack_keys:
+            return
+
+        self.config_stack.setCurrentIndex(self.config_stack_keys.index(route_key))
+        for key, button in self.nav_buttons.items():
+            button.setProperty("selected", key == route_key)
+            button.style().unpolish(button)
+            button.style().polish(button)
+            button.update()
+
+    def apply_panel_style(self):
+        """为单面板布局应用样式"""
+        light_qss = """
+            CardWidget#ConfigPanel {
+                background-color: #ffffff;
+                border: 1px solid rgba(0, 0, 0, 0.08);
+                border-radius: 8px;
+            }
+            QFrame#TopSettingsBar {
+                background-color: #fbfbfc;
+                border: 1px solid rgba(0, 0, 0, 0.07);
+                border-radius: 8px;
+            }
+            QFrame#ActionBar {
+                background-color: #fbfbfc;
+                border: 1px solid rgba(0, 0, 0, 0.07);
+                border-radius: 8px;
+            }
+            QFrame#ThemeBox {
+                background-color: #ffffff;
+                border: 1px solid rgba(0, 0, 0, 0.08);
+                border-radius: 6px;
+            }
+        """
+
+        dark_qss = """
+            CardWidget#ConfigPanel {
+                background-color: #1f2937;
+                border: 1px solid rgba(255, 255, 255, 0.10);
+                border-radius: 8px;
+            }
+            QFrame#TopSettingsBar {
+                background-color: #263241;
+                border: 1px solid rgba(255, 255, 255, 0.10);
+                border-radius: 8px;
+            }
+            QFrame#ActionBar {
+                background-color: #263241;
+                border: 1px solid rgba(255, 255, 255, 0.10);
+                border-radius: 8px;
+            }
+            QFrame#ThemeBox {
+                background-color: #374151;
+                border: 1px solid rgba(255, 255, 255, 0.10);
+                border-radius: 6px;
+            }
+        """
+
+        setCustomStyleSheet(self.config_panel, light_qss, dark_qss)
         
     def apply_page_title_style(self, label):
         """为页面标题应用样式"""
         light_qss = """
             TitleLabel {
-                font-size: 28px;
+                font-size: 22px;
                 font-weight: bold;
                 color: #1f2937;
-                padding: 16px 0px;
+                padding: 0px;
                 margin: 0px;
             }
         """
         
         dark_qss = """
             TitleLabel {
-                font-size: 28px;
+                font-size: 22px;
                 font-weight: bold;
                 color: #f9fafb;
-                padding: 16px 0px;
+                padding: 0px;
                 margin: 0px;
             }
         """
@@ -622,85 +1521,26 @@ class ConfigInterface(QWidget):
     
     def create_app_settings_section(self):
         """创建应用设置区域"""
-        card = CardWidget()
-        card.setBorderRadius(12)
-        layout = QVBoxLayout(card)
-        layout.setContentsMargins(24, 24, 24, 24)
-        layout.setSpacing(20)
-        
-        # 标题区域
-        title_container = QWidget()
-        title_layout = QHBoxLayout(title_container)
-        title_layout.setContentsMargins(0, 0, 0, 0)
-        title_layout.setSpacing(12)
-        
+        card = QFrame()
+        card.setObjectName("TopSettingsBar")
+        layout = QHBoxLayout(card)
+        layout.setContentsMargins(12, 10, 12, 10)
+        layout.setSpacing(10)
+
         settings_icon = IconWidget(FIF.SETTING, card)
-        settings_icon.setFixedSize(24, 24)
-        title_layout.addWidget(settings_icon)
-        
-        title_label = SubtitleLabel("应用设置")
-        self.apply_title_label_style(title_label)
-        title_layout.addWidget(title_label)
-        title_layout.addStretch()
-        
-        layout.addWidget(title_container)
-        
-        # 标题级别开关
-        title_group = HeaderCardWidget()
-        title_group.setTitle("标题级别设置")
-        
-        level_label = BodyLabel("启用的标题级别:")
-        title_group.viewLayout.addWidget(level_label)
-        
-        checkbox_container = QWidget()
-        checkbox_layout = QHBoxLayout(checkbox_container)
-        checkbox_layout.setContentsMargins(0, 0, 0, 0)
-        checkbox_layout.setSpacing(20)
-        
-        self.h1_checkbox = CheckBox("一级标题")
-        self.h1_checkbox.setChecked(True)
-        self.h1_checkbox.stateChanged.connect(self.on_title_level_changed)
-        checkbox_layout.addWidget(self.h1_checkbox)
-        
-        self.h2_checkbox = CheckBox("二级标题") 
-        self.h2_checkbox.setChecked(True)
-        self.h2_checkbox.stateChanged.connect(self.on_title_level_changed)
-        checkbox_layout.addWidget(self.h2_checkbox)
-        
-        self.h3_checkbox = CheckBox("三级标题") 
-        self.h3_checkbox.setChecked(True)
-        self.h3_checkbox.stateChanged.connect(self.on_title_level_changed)
-        checkbox_layout.addWidget(self.h3_checkbox)
-        
-        self.special_checkbox = CheckBox("特殊格式") 
-        self.special_checkbox.setChecked(True)
-        self.special_checkbox.stateChanged.connect(self.on_title_level_changed)
-        checkbox_layout.addWidget(self.special_checkbox)
-        
-        checkbox_layout.addStretch()
-        title_group.viewLayout.addWidget(checkbox_container)
-        
-        layout.addWidget(title_group)
-        
-        # 主题设置
-        ui_group = HeaderCardWidget()
-        ui_group.setTitle("界面设置")
-        
-        theme_container = QWidget()
-        theme_layout = QHBoxLayout(theme_container)
-        theme_layout.setContentsMargins(0, 0, 0, 0)
-        theme_layout.setSpacing(12)
-        
-        theme_layout.addWidget(BodyLabel("主题:"))
-        self.theme_combo = ComboBox()
+        settings_icon.setFixedSize(18, 18)
+        layout.addWidget(settings_icon)
+
+        layout.addWidget(StrongBodyLabel("界面"))
+        layout.addStretch()
+        layout.addWidget(BodyLabel("主题"))
+
+        self.theme_combo = BodyClickableComboBox()
         self.theme_combo.addItems(["自动", "浅色", "深色"])
         self.theme_combo.setCurrentIndex(0)
+        self.theme_combo.setFixedWidth(92)
         self.theme_combo.currentTextChanged.connect(self.on_theme_changed)
-        theme_layout.addWidget(self.theme_combo)
-        theme_layout.addStretch()
-        
-        ui_group.viewLayout.addWidget(theme_container)
-        layout.addWidget(ui_group)
+        layout.addWidget(self.theme_combo)
         
         return card
     
@@ -792,6 +1632,9 @@ class ConfigInterface(QWidget):
     
     def apply_scroll_area_style(self):
         """为滚动区域应用特殊样式"""
+        if not hasattr(self, 'scroll'):
+            return
+
         # 美化滚动区域样式
         light_qss = """
             QScrollArea {
@@ -841,59 +1684,56 @@ class ConfigInterface(QWidget):
     
     def setup_save_button(self, layout):
         """设置保存按钮"""
-        # 创建底部操作区域
-        bottom_container = CardWidget()
-        bottom_container.setBorderRadius(12)
-        bottom_layout = QVBoxLayout(bottom_container)
-        bottom_layout.setContentsMargins(24, 16, 24, 16)
-        bottom_layout.setSpacing(12)
-        
-        # 配置文件路径信息
-        from ..config import user_config_manager
+        bottom_container = QFrame()
+        bottom_container.setObjectName("ActionBar")
+        bottom_layout = QHBoxLayout(bottom_container)
+        bottom_layout.setContentsMargins(12, 10, 12, 10)
+        bottom_layout.setSpacing(8)
+
         config_path = user_config_manager.get_config_file_path()
-        path_label = CaptionLabel(f"📁 配置文件路径: {config_path}")
+        path_label = CaptionLabel("配置文件")
         path_label.setStyleSheet("color: #888888; font-size: 10px;")
-        path_label.setWordWrap(True)
+        path_label.setToolTip(config_path)
+        path_label.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
         bottom_layout.addWidget(path_label)
-        
-        # 按钮行
-        button_container = QWidget()
-        button_layout = QHBoxLayout(button_container)
-        button_layout.setContentsMargins(0, 0, 0, 0)
-        button_layout.setSpacing(16)
-        
-        # 左侧提示信息
-        tip_label = CaptionLabel("💡 配置修改后需要点击保存按钮才能生效")
-        tip_label.setStyleSheet("color: #666666;")
-        button_layout.addWidget(tip_label)
-        
-        button_layout.addStretch()
-        
-        # 导出配置按钮
-        export_button = PushButton("导出配置")
+
+        theme_box = QFrame(bottom_container)
+        theme_box.setObjectName("ThemeBox")
+        theme_layout = QHBoxLayout(theme_box)
+        theme_layout.setContentsMargins(10, 0, 8, 0)
+        theme_layout.setSpacing(8)
+        theme_box.setFixedHeight(34)
+        theme_label = BodyLabel("主题", theme_box)
+        theme_layout.addWidget(theme_label)
+
+        self.theme_combo = BodyClickableComboBox(theme_box)
+        self.theme_combo.addItems(["自动", "浅色", "深色"])
+        self.theme_combo.setCurrentIndex(0)
+        self.theme_combo.setFixedWidth(88)
+        self.theme_combo.currentTextChanged.connect(self.on_theme_changed)
+        theme_layout.addWidget(self.theme_combo)
+        bottom_layout.addWidget(theme_box)
+
+        export_button = PushButton("导出")
         export_button.setIcon(FIF.UP)
-        export_button.setFixedSize(120, 36)
+        export_button.setFixedSize(88, 34)
         export_button.clicked.connect(self.export_config)
-        button_layout.addWidget(export_button)
+        bottom_layout.addWidget(export_button)
         
-        # 导入配置按钮
-        import_button = PushButton("导入配置")
+        import_button = PushButton("导入")
         import_button.setIcon(FIF.DOWN)
-        import_button.setFixedSize(120, 36)
+        import_button.setFixedSize(88, 34)
         import_button.clicked.connect(self.import_config)
-        button_layout.addWidget(import_button)
+        bottom_layout.addWidget(import_button)
         
-        # 保存按钮
-        save_all_button = PrimaryPushButton("保存所有配置")
+        save_all_button = PrimaryPushButton("保存")
         save_all_button.setIcon(FIF.SAVE)
-        save_all_button.setFixedSize(160, 36)  # 增加宽度确保文字完整显示
+        save_all_button.setFixedSize(112, 34)
         save_all_button.clicked.connect(self.save_all_config)
         
-        # 应用保存按钮特殊样式
         self.apply_save_button_style(save_all_button)
-        button_layout.addWidget(save_all_button)
+        bottom_layout.addWidget(save_all_button)
         
-        bottom_layout.addWidget(button_container)
         layout.addWidget(bottom_container)
     
     def apply_save_button_style(self, button):
@@ -965,38 +1805,34 @@ class ConfigInterface(QWidget):
     
     def get_title_matching_settings(self):
         """获取标题匹配设置"""
+        rules = user_config_manager.get_recognition_rules()
+        enabled_targets = {
+            rule.target_level
+            for rule in rules
+            if rule.enabled and rule.target_level != "disabled"
+        }
+        if not rules:
+            enabled_targets = {"h1", "h2", "h3", "special_format"}
+
         return {
-            'enable_h1': self.h1_checkbox.isChecked(),
-            'enable_h2': self.h2_checkbox.isChecked(),
-            'enable_h3': self.h3_checkbox.isChecked(),
-            'enable_special': self.special_checkbox.isChecked()
+            'enable_h1': 'h1' in enabled_targets,
+            'enable_h2': 'h2' in enabled_targets,
+            'enable_h3': 'h3' in enabled_targets,
+            'enable_special': 'special_format' in enabled_targets
         }
     
     def on_title_level_changed(self):
         """标题级别设置改变时的处理"""
         try:
-            # 获取当前设置
             settings = self.get_title_matching_settings()
-            
-            # 保存到配置管理器
-            from ..config import user_config_manager
             user_config_manager.save_ui_settings(settings)
-            
         except Exception as e:
             print(f"保存标题级别设置失败: {e}")
     
     def load_ui_settings(self):
         """加载界面设置"""
         try:
-            from ..config import user_config_manager
             settings = user_config_manager.load_ui_settings()
-            
-            # 设置复选框状态
-            self.h1_checkbox.setChecked(settings.get('enable_h1', True))
-            self.h2_checkbox.setChecked(settings.get('enable_h2', True))
-            self.h3_checkbox.setChecked(settings.get('enable_h3', True))
-            self.special_checkbox.setChecked(settings.get('enable_special', True))
-            
             print(f"界面设置已加载: {settings}")
             
         except Exception as e:
@@ -1005,39 +1841,26 @@ class ConfigInterface(QWidget):
     def save_all_config(self):
         """保存所有配置"""
         try:
-            # 统计配置项
             total_rules = 0
             total_levels = 0
-            
-            for level, card in self.config_cards.items():
-                # 触发每个卡片的保存
-                if hasattr(card, 'save_config_silent'):
-                    try:
-                        card.save_config_silent()  # 静默保存，不显示单独的提示
-                        total_levels += 1
-                        
-                        # 统计规则数量
-                        if hasattr(card, 'rule_widgets'):
-                            rule_count = len([w for w in card.rule_widgets if w.pattern.pattern.strip()])
-                            total_rules += rule_count
-                            print(f"已保存 {card.title}: 样式配置 + {rule_count} 个规则")
-                        else:
-                            print(f"已保存 {card.title}: 样式配置")
-                            
-                    except Exception as e:
-                        print(f"保存 {level} 配置失败: {e}")
-                        total_levels -= 1
-            
-            # 保存界面设置
-            ui_settings = self.get_title_matching_settings()
-            from ..config import user_config_manager
-            user_config_manager.save_ui_settings(ui_settings)
-            
-            # 生成更有意义的提示信息
+
+            if hasattr(self, 'style_card'):
+                self.style_card.save_config_silent()
+                total_levels = len(self.style_card.rows)
+
+            if hasattr(self, 'rules_card'):
+                self.rules_card.save_config_silent()
+                total_rules = len([
+                    rule for rule in user_config_manager.get_recognition_rules()
+                    if rule.enabled and rule.target_level != "disabled"
+                ])
+
+            user_config_manager.save_ui_settings(self.get_title_matching_settings())
+
             if total_rules > 0:
-                content = f"已保存 {total_levels} 个级别配置、{total_rules} 个正则规则、界面设置"
+                content = f"已保存 {total_levels} 个格式样式、{total_rules} 条识别规则"
             else:
-                content = f"已保存 {total_levels} 个级别配置和界面设置"
+                content = f"已保存 {total_levels} 个格式样式"
             
             InfoBar.success(
                 title="保存成功",
@@ -1156,6 +1979,7 @@ class ConfigInterface(QWidget):
     
     def refresh_all_configs(self):
         """刷新所有配置卡片"""
-        for card in self.config_cards.values():
-            if hasattr(card, 'load_config'):
-                card.load_config()
+        if hasattr(self, 'style_card'):
+            self.style_card.load_config()
+        if hasattr(self, 'rules_card'):
+            self.rules_card.load_config()

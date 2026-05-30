@@ -75,11 +75,35 @@ class TextProcessor:
     
     def _process_quotes(self, text: str) -> str:
         """处理引号：将英文直引号替换为中文引号"""
-        # 先处理成对双引号：避免跨段落，限制在同一行内
-        text = re.sub(r'"([^"\n]+)"', r'“\1”', text)
-        # 再处理成对单引号：避免英文缩写中的撇号（通过要求两侧不同时为字母来降低误伤）
-        text = re.sub(r"(?<![A-Za-z])'([^'\n]+)'(?![A-Za-z])", r"‘\1’", text)
-        return text
+        processed_lines = []
+
+        for line in text.split('\n'):
+            double_quote_open = True
+            single_quote_open = True
+            chars = []
+
+            for index, char in enumerate(line):
+                if char == '"':
+                    chars.append('“' if double_quote_open else '”')
+                    double_quote_open = not double_quote_open
+                    continue
+
+                if char == "'":
+                    prev_char = line[index - 1] if index > 0 else ''
+                    next_char = line[index + 1] if index + 1 < len(line) else ''
+
+                    if prev_char.isascii() and prev_char.isalpha() and next_char.isascii() and next_char.isalpha():
+                        chars.append(char)
+                    else:
+                        chars.append('‘' if single_quote_open else '’')
+                        single_quote_open = not single_quote_open
+                    continue
+
+                chars.append(char)
+
+            processed_lines.append(''.join(chars))
+
+        return '\n'.join(processed_lines)
     
     def _clean_whitespace(self, text: str) -> str:
         """清理空白字符"""

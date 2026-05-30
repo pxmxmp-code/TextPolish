@@ -411,10 +411,24 @@ p.MsoNormal {{
         return html_template
 
     def _normalize_wps_western_font(self, body_content: str) -> str:
-        """确保 WPS/Word 按 Times New Roman 渲染西文字符"""
+        """只规范显式西文片段，避免中文标点继承 Times New Roman"""
+        def normalize_english_span(match):
+            style = match.group("style")
+            style = re.sub(
+                r"font-family:(?!&quot;Times New Roman&quot;)[^;]+;",
+                f"font-family:{self.WESTERN_FONT_FAMILY};",
+                style
+            )
+            style = re.sub(
+                r"mso-(ascii|hansi|bidi)-font-family:(?!&quot;Times New Roman&quot;)[^;]+;",
+                lambda font_match: self._western_font_declaration(font_match.group(1)),
+                style
+            )
+            return f"{match.group('prefix')}{style}{match.group('suffix')}"
+
         return re.sub(
-            r"mso-(ascii|hansi|bidi)-font-family:(?!&quot;Times New Roman&quot;)[^;]+;",
-            lambda match: self._western_font_declaration(match.group(1)),
+            r"(?P<prefix><span\s+lang=\"EN-US\"\s+style=')(?P<style>[^']*)(?P<suffix>'>)",
+            normalize_english_span,
             body_content
         )
     

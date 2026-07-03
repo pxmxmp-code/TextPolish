@@ -983,7 +983,102 @@ class RecognitionRulesCard(CardWidget):
 
         outer_layout = QVBoxLayout(rule_widget)
         outer_layout.setContentsMargins(8, 6, 8, 6)
-        outer_layout.setSpacing(4)
+        outer_layout.setSpacing(6)
+
+        rule_widget.name_edit = None
+        rule_widget.pattern_edit = None
+        rule_widget.move_up_button = None
+        rule_widget.move_down_button = None
+        rule_widget.remove_button = None
+
+        if rule.matcher_type == "advanced_regex":
+            top_row = QWidget(rule_widget)
+            top_layout = QHBoxLayout(top_row)
+            top_layout.setContentsMargins(0, 0, 0, 0)
+            top_layout.setSpacing(8)
+            outer_layout.addWidget(top_row)
+
+            name_label = BodyLabel("名称", rule_widget)
+            name_label.setFixedWidth(36)
+            top_layout.addWidget(name_label)
+
+            name_edit = LineEdit(rule_widget)
+            name_edit.setText(rule.name)
+            name_edit.setPlaceholderText("规则名称")
+            name_edit.setMinimumWidth(190)
+            name_edit.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+            top_layout.addWidget(name_edit, 1)
+
+            top_layout.addWidget(BodyLabel("识别为", rule_widget))
+            target_combo = BodyClickableComboBox(rule_widget)
+            target_options = self._target_options(rule)
+            target_combo.target_options = target_options
+            target_combo.addItems([label for label, _ in target_options])
+            target_combo.setFixedWidth(104)
+            target_combo.setCurrentIndex(
+                self._target_index(rule.target_level if rule.enabled else "disabled", target_options)
+            )
+            top_layout.addWidget(target_combo)
+
+            pattern_row = QWidget(rule_widget)
+            pattern_layout = QHBoxLayout(pattern_row)
+            pattern_layout.setContentsMargins(0, 0, 0, 0)
+            pattern_layout.setSpacing(8)
+            outer_layout.addWidget(pattern_row)
+
+            pattern_label = BodyLabel("正则", rule_widget)
+            pattern_label.setFixedWidth(36)
+            pattern_layout.addWidget(pattern_label)
+
+            pattern_edit = LineEdit(rule_widget)
+            pattern_edit.setText(str(rule.params.get("pattern", "")))
+            pattern_edit.setPlaceholderText(r"^附录[A-Z]?\s+.+")
+            pattern_edit.setMinimumWidth(320)
+            pattern_edit.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+            pattern_layout.addWidget(pattern_edit, 1)
+
+            action_row = QWidget(rule_widget)
+            action_layout = QHBoxLayout(action_row)
+            action_layout.setContentsMargins(0, 0, 0, 0)
+            action_layout.setSpacing(8)
+            action_layout.addStretch()
+            outer_layout.addWidget(action_row)
+
+            move_up_button = PushButton("上移", rule_widget)
+            move_up_button.setIcon(FIF.UP)
+            move_up_button.setToolTip("上移高级正则规则")
+            move_up_button.setFixedSize(68, 30)
+            move_up_button.clicked.connect(lambda: self.move_advanced_regex_rule(rule_widget, -1))
+            action_layout.addWidget(move_up_button)
+
+            move_down_button = PushButton("下移", rule_widget)
+            move_down_button.setIcon(FIF.DOWN)
+            move_down_button.setToolTip("下移高级正则规则")
+            move_down_button.setFixedSize(68, 30)
+            move_down_button.clicked.connect(lambda: self.move_advanced_regex_rule(rule_widget, 1))
+            action_layout.addWidget(move_down_button)
+
+            remove_button = PushButton("删除", rule_widget)
+            remove_button.setIcon(FIF.DELETE)
+            remove_button.setToolTip("删除高级正则规则")
+            remove_button.setFixedSize(68, 30)
+            remove_button.clicked.connect(lambda: self.remove_advanced_regex_rule(rule_widget))
+            action_layout.addWidget(remove_button)
+
+            rule_widget.name_edit = name_edit
+            rule_widget.pattern_edit = pattern_edit
+            rule_widget.target_combo = target_combo
+            rule_widget.move_up_button = move_up_button
+            rule_widget.move_down_button = move_down_button
+            rule_widget.remove_button = remove_button
+
+            name_edit.textChanged.connect(lambda *_: self.save_config_silent())
+            pattern_edit.textChanged.connect(lambda *_: self.save_config_silent())
+            target_combo.currentIndexChanged.connect(lambda *_: self.save_config_silent())
+
+            rule_widget.delimiter_checks = {}
+            rule_widget.custom_delimiter_edit = None
+            return rule_widget
 
         row_container = QWidget(rule_widget)
         row_layout = QHBoxLayout(row_container)
@@ -996,32 +1091,11 @@ class RecognitionRulesCard(CardWidget):
         info_layout.setContentsMargins(0, 0, 0, 0)
         info_layout.setSpacing(2)
 
-        rule_widget.name_edit = None
-        rule_widget.pattern_edit = None
+        info_layout.addWidget(StrongBodyLabel(rule.name, rule_widget))
 
-        if rule.matcher_type == "advanced_regex":
-            name_edit = LineEdit(rule_widget)
-            name_edit.setText(rule.name)
-            name_edit.setPlaceholderText("规则名称")
-            name_edit.setMinimumWidth(160)
-            name_edit.textChanged.connect(lambda *_: self.save_config_silent())
-            info_layout.addWidget(name_edit)
-
-            pattern_edit = LineEdit(rule_widget)
-            pattern_edit.setText(str(rule.params.get("pattern", "")))
-            pattern_edit.setPlaceholderText(r"从行首匹配，例如 ^附录[A-Z]?\s+.+")
-            pattern_edit.setMinimumWidth(260)
-            pattern_edit.textChanged.connect(lambda *_: self.save_config_silent())
-            info_layout.addWidget(pattern_edit)
-
-            rule_widget.name_edit = name_edit
-            rule_widget.pattern_edit = pattern_edit
-        else:
-            info_layout.addWidget(StrongBodyLabel(rule.name, rule_widget))
-
-            sample_label = CaptionLabel(f"示例：{self._sample_text(rule)}", rule_widget)
-            sample_label.setStyleSheet("color: #777777;")
-            info_layout.addWidget(sample_label)
+        sample_label = CaptionLabel(f"示例：{self._sample_text(rule)}", rule_widget)
+        sample_label.setStyleSheet("color: #777777;")
+        info_layout.addWidget(sample_label)
 
         row_layout.addWidget(info_container, 1)
 
@@ -1041,36 +1115,6 @@ class RecognitionRulesCard(CardWidget):
         target_combo.currentIndexChanged.connect(lambda *_: self.save_config_silent())
         row_layout.addWidget(target_combo)
         rule_widget.target_combo = target_combo
-
-        rule_widget.move_up_button = None
-        rule_widget.move_down_button = None
-        rule_widget.remove_button = None
-
-        if rule.matcher_type == "advanced_regex":
-            move_up_button = TransparentPushButton()
-            move_up_button.setIcon(FIF.UP)
-            move_up_button.setToolTip("上移")
-            move_up_button.setFixedSize(30, 30)
-            move_up_button.clicked.connect(lambda: self.move_advanced_regex_rule(rule_widget, -1))
-            row_layout.addWidget(move_up_button)
-
-            move_down_button = TransparentPushButton()
-            move_down_button.setIcon(FIF.DOWN)
-            move_down_button.setToolTip("下移")
-            move_down_button.setFixedSize(30, 30)
-            move_down_button.clicked.connect(lambda: self.move_advanced_regex_rule(rule_widget, 1))
-            row_layout.addWidget(move_down_button)
-
-            remove_button = TransparentPushButton()
-            remove_button.setIcon(FIF.DELETE)
-            remove_button.setToolTip("删除")
-            remove_button.setFixedSize(30, 30)
-            remove_button.clicked.connect(lambda: self.remove_advanced_regex_rule(rule_widget))
-            row_layout.addWidget(remove_button)
-
-            rule_widget.move_up_button = move_up_button
-            rule_widget.move_down_button = move_down_button
-            rule_widget.remove_button = remove_button
 
         rule_widget.delimiter_checks = {}
         rule_widget.custom_delimiter_edit = None

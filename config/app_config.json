@@ -1,7 +1,7 @@
 {
   "app_info": {
     "name": "TextPolish",
-    "version": "3.3.1",
+    "version": "3.3.2",
     "description": "Gemini文本格式修复工具"
   },
   "ui_framework": {

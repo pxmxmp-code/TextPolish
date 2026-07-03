@@ -4,7 +4,7 @@ TextPolish - Gemini文本格式修复工具
 用于处理Gemini AI回答文本复制到Word后的格式混乱问题
 """
 
-__version__ = "2.0.0"
+__version__ = "3.3.0"
 __author__ = "TextPolish Team"
 __description__ = "Gemini文本格式修复工具"
 

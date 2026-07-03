@@ -2895,7 +2895,7 @@ wheels = [
 
 [[package]]
 name = "textpolish"
-version = "2.1.0"
+version = "3.3.1"
 source = { virtual = "." }
 dependencies = [
     { name = "beautifulsoup4" },

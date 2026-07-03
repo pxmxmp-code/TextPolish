@@ -1,6 +1,6 @@
 [project]
 name = "textpolish"
-version = "3.3.0"
+version = "3.3.1"
 description = "Gemini文本格式修复工具 - 用于处理Gemini AI回答文本复制到Word后的格式混乱问题"
 readme = "README.md"
 requires-python = ">=3.13"

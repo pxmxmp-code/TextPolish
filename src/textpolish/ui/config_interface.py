@@ -4,6 +4,7 @@
 """
 
 import re
+import uuid
 from dataclasses import dataclass
 
 from PyQt6.QtWidgets import (
@@ -828,6 +829,12 @@ class RecognitionRulesCard(CardWidget):
         ("三级标题", "h3"),
         ("特殊格式", "special_format"),
     ]
+    TITLE_TARGET_OPTIONS = [
+        ("关闭", "disabled"),
+        ("一级标题", "h1"),
+        ("二级标题", "h2"),
+        ("三级标题", "h3"),
+    ]
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -855,6 +862,13 @@ class RecognitionRulesCard(CardWidget):
 
         title_layout.addWidget(SubtitleLabel("识别规则", self))
         title_layout.addStretch()
+
+        self.add_regex_button = PushButton("高级正则", self)
+        self.add_regex_button.setIcon(FIF.ADD)
+        self.add_regex_button.setFixedSize(112, 30)
+        self.add_regex_button.clicked.connect(self.add_advanced_regex_rule)
+        title_layout.addWidget(self.add_regex_button)
+
         layout.addWidget(title_row)
 
         rules_section = QFrame(self)
@@ -909,24 +923,34 @@ class RecognitionRulesCard(CardWidget):
             "section": "第一节 基本情况",
             "chinese_list": "一、总体要求",
             "chinese_parentheses": "（一）政策支持",
+            "hierarchical_numeric": "1 背景 / 1.1 现状 / 1.1.1 数据来源",
             "arabic_comma": "1、项目背景",
             "arabic_dot": "1. Project background",
             "prefix_symbol": "技术创新能力：正文内容",
+            "advanced_regex": str(rule.params.get("pattern", "")) or "自定义正则",
         }
         return samples.get(rule.matcher_type, "")
 
-    def _target_index(self, target_level: str) -> int:
+    def _target_options(self, rule: RecognitionRule) -> list[tuple[str, str]]:
+        """按规则类型获取可选目标级别"""
+        if rule.matcher_type in {"hierarchical_numeric", "advanced_regex"}:
+            return self.TITLE_TARGET_OPTIONS
+        return self.TARGET_OPTIONS
+
+    def _target_index(self, target_level: str, options: list[tuple[str, str]] = None) -> int:
         """获取输出级别在下拉框中的位置"""
-        for index, (_, value) in enumerate(self.TARGET_OPTIONS):
+        target_options = options or self.TARGET_OPTIONS
+        for index, (_, value) in enumerate(target_options):
             if value == target_level:
                 return index
         return 0
 
     def _target_value(self, combo: ComboBox) -> str:
         """读取输出级别保存值"""
+        target_options = getattr(combo, "target_options", self.TARGET_OPTIONS)
         index = combo.currentIndex()
-        if 0 <= index < len(self.TARGET_OPTIONS):
-            return self.TARGET_OPTIONS[index][1]
+        if 0 <= index < len(target_options):
+            return target_options[index][1]
         return "disabled"
 
     def _clear_layout(self, layout: QVBoxLayout):
@@ -971,21 +995,82 @@ class RecognitionRulesCard(CardWidget):
         info_layout = QVBoxLayout(info_container)
         info_layout.setContentsMargins(0, 0, 0, 0)
         info_layout.setSpacing(2)
-        info_layout.addWidget(StrongBodyLabel(rule.name, rule_widget))
 
-        sample_label = CaptionLabel(f"示例：{self._sample_text(rule)}", rule_widget)
-        sample_label.setStyleSheet("color: #777777;")
-        info_layout.addWidget(sample_label)
+        rule_widget.name_edit = None
+        rule_widget.pattern_edit = None
+
+        if rule.matcher_type == "advanced_regex":
+            name_edit = LineEdit(rule_widget)
+            name_edit.setText(rule.name)
+            name_edit.setPlaceholderText("规则名称")
+            name_edit.setMinimumWidth(160)
+            name_edit.textChanged.connect(lambda *_: self.save_config_silent())
+            info_layout.addWidget(name_edit)
+
+            pattern_edit = LineEdit(rule_widget)
+            pattern_edit.setText(str(rule.params.get("pattern", "")))
+            pattern_edit.setPlaceholderText(r"从行首匹配，例如 ^附录[A-Z]?\s+.+")
+            pattern_edit.setMinimumWidth(260)
+            pattern_edit.textChanged.connect(lambda *_: self.save_config_silent())
+            info_layout.addWidget(pattern_edit)
+
+            rule_widget.name_edit = name_edit
+            rule_widget.pattern_edit = pattern_edit
+        else:
+            info_layout.addWidget(StrongBodyLabel(rule.name, rule_widget))
+
+            sample_label = CaptionLabel(f"示例：{self._sample_text(rule)}", rule_widget)
+            sample_label.setStyleSheet("color: #777777;")
+            info_layout.addWidget(sample_label)
+
         row_layout.addWidget(info_container, 1)
 
-        row_layout.addWidget(BodyLabel("识别为", rule_widget))
+        target_label = "起始级别" if rule.matcher_type == "hierarchical_numeric" else "识别为"
+        row_layout.addWidget(BodyLabel(target_label, rule_widget))
         target_combo = BodyClickableComboBox(rule_widget)
-        target_combo.addItems([label for label, _ in self.TARGET_OPTIONS])
+        target_options = self._target_options(rule)
+        target_combo.target_options = target_options
+        target_combo.addItems([label for label, _ in target_options])
         target_combo.setFixedWidth(104)
-        target_combo.setCurrentIndex(self._target_index(rule.target_level if rule.enabled else "disabled"))
+        current_target_level = rule.target_level
+        if rule.matcher_type == "hierarchical_numeric":
+            current_target_level = str(rule.params.get("start_level") or rule.target_level)
+        target_combo.setCurrentIndex(
+            self._target_index(current_target_level if rule.enabled else "disabled", target_options)
+        )
         target_combo.currentIndexChanged.connect(lambda *_: self.save_config_silent())
         row_layout.addWidget(target_combo)
         rule_widget.target_combo = target_combo
+
+        rule_widget.move_up_button = None
+        rule_widget.move_down_button = None
+        rule_widget.remove_button = None
+
+        if rule.matcher_type == "advanced_regex":
+            move_up_button = TransparentPushButton()
+            move_up_button.setIcon(FIF.UP)
+            move_up_button.setToolTip("上移")
+            move_up_button.setFixedSize(30, 30)
+            move_up_button.clicked.connect(lambda: self.move_advanced_regex_rule(rule_widget, -1))
+            row_layout.addWidget(move_up_button)
+
+            move_down_button = TransparentPushButton()
+            move_down_button.setIcon(FIF.DOWN)
+            move_down_button.setToolTip("下移")
+            move_down_button.setFixedSize(30, 30)
+            move_down_button.clicked.connect(lambda: self.move_advanced_regex_rule(rule_widget, 1))
+            row_layout.addWidget(move_down_button)
+
+            remove_button = TransparentPushButton()
+            remove_button.setIcon(FIF.DELETE)
+            remove_button.setToolTip("删除")
+            remove_button.setFixedSize(30, 30)
+            remove_button.clicked.connect(lambda: self.remove_advanced_regex_rule(rule_widget))
+            row_layout.addWidget(remove_button)
+
+            rule_widget.move_up_button = move_up_button
+            rule_widget.move_down_button = move_down_button
+            rule_widget.remove_button = remove_button
 
         rule_widget.delimiter_checks = {}
         rule_widget.custom_delimiter_edit = None
@@ -1017,6 +1102,61 @@ class RecognitionRulesCard(CardWidget):
 
         return rule_widget
 
+    def add_advanced_regex_rule(self):
+        """添加高级正则兜底规则"""
+        new_rule = RecognitionRule(
+            id=f"advanced_regex_{uuid.uuid4().hex[:8]}",
+            name="自定义正则",
+            matcher_type="advanced_regex",
+            target_level="h3",
+            enabled=True,
+            priority=len(self.rule_widgets) * 10 + 10,
+            params={"pattern": "", "sample": "自定义标题"},
+        )
+        rule_widget = self.create_rule_widget(new_rule)
+        self.rule_widgets.append(rule_widget)
+        self.rules_layout.addWidget(rule_widget)
+        self.save_config_silent()
+
+    def remove_advanced_regex_rule(self, rule_widget: QWidget):
+        """删除高级正则规则"""
+        if rule_widget not in self.rule_widgets:
+            return
+        if rule_widget.rule.matcher_type != "advanced_regex":
+            return
+
+        self.rule_widgets.remove(rule_widget)
+        rule_widget.deleteLater()
+        self.save_config_silent()
+
+    def move_advanced_regex_rule(self, rule_widget: QWidget, direction: int):
+        """在高级正则列表内部移动规则"""
+        if rule_widget not in self.rule_widgets:
+            return
+        if rule_widget.rule.matcher_type != "advanced_regex":
+            return
+
+        current_index = self.rule_widgets.index(rule_widget)
+        candidate_index = current_index + direction
+        while 0 <= candidate_index < len(self.rule_widgets):
+            candidate = self.rule_widgets[candidate_index]
+            if candidate.rule.matcher_type == "advanced_regex":
+                self.rule_widgets[current_index], self.rule_widgets[candidate_index] = (
+                    self.rule_widgets[candidate_index],
+                    self.rule_widgets[current_index],
+                )
+                self._rebuild_rules_layout()
+                self.save_config_silent()
+                return
+            candidate_index += direction
+
+    def _rebuild_rules_layout(self):
+        """按 rule_widgets 顺序重建规则布局"""
+        while self.rules_layout.count():
+            self.rules_layout.takeAt(0)
+        for widget in self.rule_widgets:
+            self.rules_layout.addWidget(widget)
+
     def save_config_silent(self):
         """保存语义识别规则"""
         if self._loading:
@@ -1027,6 +1167,7 @@ class RecognitionRulesCard(CardWidget):
             rule = widget.rule
             target_level = self._target_value(widget.target_combo)
             params = dict(rule.params)
+            name = rule.name
 
             if rule.matcher_type == "prefix_symbol":
                 params["delimiters"] = [
@@ -1035,16 +1176,28 @@ class RecognitionRulesCard(CardWidget):
                 ]
                 if widget.custom_delimiter_edit:
                     params["custom_delimiter"] = widget.custom_delimiter_edit.text().strip()
+            elif rule.matcher_type == "hierarchical_numeric":
+                if target_level in {"h1", "h2", "h3"}:
+                    params["start_level"] = target_level
+                else:
+                    params.setdefault("start_level", "h1")
+            elif rule.matcher_type == "advanced_regex":
+                if widget.name_edit:
+                    name = widget.name_edit.text().strip() or "自定义正则"
+                if widget.pattern_edit:
+                    params["pattern"] = widget.pattern_edit.text().strip()
 
-            rules.append(RecognitionRule(
+            updated_rule = RecognitionRule(
                 id=rule.id,
-                name=rule.name,
+                name=name,
                 matcher_type=rule.matcher_type,
                 target_level=target_level,
                 enabled=target_level != "disabled",
                 priority=index * 10 + 10,
                 params=params,
-            ))
+            )
+            widget.rule = updated_rule
+            rules.append(updated_rule)
 
         user_config_manager.update_recognition_rules(rules)
         self.config_changed.emit()
@@ -1805,13 +1958,8 @@ class ConfigInterface(QWidget):
     
     def get_title_matching_settings(self):
         """获取标题匹配设置"""
-        rules = user_config_manager.get_recognition_rules()
-        enabled_targets = {
-            rule.target_level
-            for rule in rules
-            if rule.enabled and rule.target_level != "disabled"
-        }
-        if not rules:
+        enabled_targets = user_config_manager.get_enabled_recognition_target_levels()
+        if not user_config_manager.get_recognition_rules():
             enabled_targets = {"h1", "h2", "h3", "special_format"}
 
         return {

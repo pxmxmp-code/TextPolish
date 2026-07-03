@@ -176,6 +176,7 @@ RECOGNITION_TARGET_LABELS = {
     "special_format": "特殊格式",
 }
 
+TITLE_LEVEL_SEQUENCE = ("h1", "h2", "h3")
 DEFAULT_SEGMENT_DELIMITERS = ["。", "："]
 SEGMENT_DELIMITER_OPTIONS = ["。", "：", "；", "，"]
 
@@ -229,6 +230,17 @@ class UserConfigManager:
                 params={"sample": "（一）政策支持"},
             ),
             RecognitionRule(
+                id="hierarchical_numeric",
+                name="层级数字编号",
+                matcher_type="hierarchical_numeric",
+                target_level="h1",
+                priority=45,
+                params={
+                    "sample": "1 背景 / 1.1 现状 / 1.1.1 数据来源",
+                    "start_level": "h1",
+                },
+            ),
+            RecognitionRule(
                 id="arabic_comma",
                 name="1、2、3、",
                 matcher_type="arabic_comma",
@@ -275,6 +287,11 @@ class UserConfigManager:
             params=params,
         )
 
+    def _recognition_rule_sort_key(self, rule: RecognitionRule) -> tuple[int, int]:
+        """内置规则始终先于高级正则，高级正则内部按 priority 排序"""
+        is_advanced_regex = rule.matcher_type == "advanced_regex"
+        return (1 if is_advanced_regex else 0, rule.priority)
+
     def _load_recognition_rules_data(self, data: List[Dict[str, Any]]) -> List[RecognitionRule]:
         """加载语义规则，保留默认规则并合并用户选择"""
         defaults = {rule.id: rule for rule in self._default_recognition_rules()}
@@ -292,7 +309,7 @@ class UserConfigManager:
         for rule_id, default_rule in defaults.items():
             loaded.setdefault(rule_id, default_rule)
 
-        return sorted(loaded.values(), key=lambda rule: rule.priority)
+        return sorted(loaded.values(), key=self._recognition_rule_sort_key)
 
     def _migrate_legacy_patterns_to_rules(self) -> List[RecognitionRule]:
         """将旧正则配置尽量映射到新的语义规则"""
@@ -315,7 +332,7 @@ class UserConfigManager:
                 rule.target_level = level
                 rule.enabled = pattern.enabled
 
-        return sorted(rules.values(), key=lambda rule: rule.priority)
+        return sorted(rules.values(), key=self._recognition_rule_sort_key)
 
     def _serialize_config(self) -> Dict[str, Any]:
         """序列化完整配置，包含旧正则字段和新语义规则字段"""
@@ -578,15 +595,71 @@ class UserConfigManager:
         """获取语义识别规则副本"""
         return [
             RecognitionRule(**asdict(rule))
-            for rule in sorted(self._recognition_rules, key=lambda item: item.priority)
+            for rule in sorted(self._recognition_rules, key=self._recognition_rule_sort_key)
         ]
 
     def update_recognition_rules(self, rules: List[RecognitionRule]):
         """更新语义识别规则"""
-        self._recognition_rules = sorted(rules, key=lambda rule: rule.priority)
+        self._recognition_rules = sorted(rules, key=self._recognition_rule_sort_key)
         self.save_config()
 
-    def _match_recognition_rule(self, rule: RecognitionRule, line: str) -> Optional[tuple[str, str]]:
+    def get_enabled_recognition_target_levels(self) -> set[str]:
+        """获取当前启用规则可能输出的标题级别"""
+        enabled_targets: set[str] = set()
+        for rule in self._recognition_rules:
+            if not rule.enabled or rule.target_level == "disabled":
+                continue
+
+            if rule.matcher_type == "hierarchical_numeric":
+                start_level = self._hierarchical_numeric_start_level(rule)
+                start_index = TITLE_LEVEL_SEQUENCE.index(start_level)
+                enabled_targets.update(TITLE_LEVEL_SEQUENCE[start_index:])
+                continue
+
+            enabled_targets.add(rule.target_level)
+
+        return enabled_targets
+
+    def _hierarchical_numeric_start_level(self, rule: RecognitionRule) -> str:
+        """读取层级数字编号的起始标题级别"""
+        start_level = str(rule.params.get("start_level") or rule.target_level or "h1")
+        if start_level not in TITLE_LEVEL_SEQUENCE:
+            return "h1"
+        return start_level
+
+    def _hierarchical_numeric_target_level(self, number_text: str, start_level: str) -> str:
+        """按编号深度和起始级别计算输出标题级别"""
+        start_index = TITLE_LEVEL_SEQUENCE.index(start_level)
+        depth = len(number_text.split("."))
+        target_index = min(start_index + depth - 1, len(TITLE_LEVEL_SEQUENCE) - 1)
+        return TITLE_LEVEL_SEQUENCE[target_index]
+
+    def _match_hierarchical_numeric(self, rule: RecognitionRule, text: str) -> Optional[tuple[str, str, str]]:
+        """匹配 1 / 1.1 / 1.1.1 这类已有层级数字编号"""
+        number_match = re.match(r"^(?P<number>[1-9]\d{0,2}(?:\.[1-9]\d{0,2})*)(?P<rest>.*)$", text)
+        if not number_match:
+            return None
+
+        number_text = number_match.group("number")
+        rest = number_match.group("rest")
+        if not rest:
+            return None
+
+        if rest[0].isspace():
+            title_text = rest.strip()
+        elif rest[0] in {".", "、"}:
+            title_text = rest[1:].strip()
+        else:
+            return None
+
+        if not title_text:
+            return None
+
+        start_level = self._hierarchical_numeric_start_level(rule)
+        target_level = self._hierarchical_numeric_target_level(number_text, start_level)
+        return text, "", target_level
+
+    def _match_recognition_rule(self, rule: RecognitionRule, line: str) -> Optional[tuple[str, str, str]]:
         """执行单条语义规则匹配，返回匹配段和剩余文本"""
         text = line.strip()
         matcher_patterns = {
@@ -599,7 +672,19 @@ class UserConfigManager:
         }
 
         if rule.matcher_type in matcher_patterns:
-            return (text, "") if re.match(matcher_patterns[rule.matcher_type], text) else None
+            return (text, "", rule.target_level) if re.match(matcher_patterns[rule.matcher_type], text) else None
+
+        if rule.matcher_type == "hierarchical_numeric":
+            return self._match_hierarchical_numeric(rule, text)
+
+        if rule.matcher_type == "advanced_regex":
+            pattern = str(rule.params.get("pattern", "")).strip()
+            if not pattern:
+                return None
+            try:
+                return (text, "", rule.target_level) if re.match(pattern, text) else None
+            except re.error:
+                return None
 
         if rule.matcher_type == "prefix_symbol":
             delimiters = [
@@ -621,31 +706,38 @@ class UserConfigManager:
 
             index, delimiter = min(candidates, key=lambda item: item[0])
             end_index = index + len(delimiter)
-            return text[:end_index], text[end_index:].strip()
+            return text[:end_index], text[end_index:].strip(), rule.target_level
 
         return None
 
     def classify_line(self, line: str, enabled_levels: Optional[set[str]] = None) -> Optional[RecognitionMatch]:
         """按语义规则识别单行文本"""
-        for rule in sorted(self._recognition_rules, key=lambda item: item.priority):
+        for rule in sorted(self._recognition_rules, key=self._recognition_rule_sort_key):
             if not rule.enabled or rule.target_level == "disabled":
                 continue
-            if enabled_levels is not None and rule.target_level not in enabled_levels:
+            if (
+                enabled_levels is not None
+                and rule.matcher_type != "hierarchical_numeric"
+                and rule.target_level not in enabled_levels
+            ):
                 continue
 
             match = self._match_recognition_rule(rule, line)
             if not match:
                 continue
 
-            matched_text, remaining_text = match
-            if rule.target_level != "special_format":
+            matched_text, remaining_text, target_level = match
+            if enabled_levels is not None and target_level not in enabled_levels:
+                continue
+
+            if target_level != "special_format":
                 matched_text = line.strip()
                 remaining_text = ""
 
             return RecognitionMatch(
                 rule_id=rule.id,
                 rule_name=rule.name,
-                target_level=rule.target_level,
+                target_level=target_level,
                 matched_text=matched_text,
                 remaining_text=remaining_text,
             )

@@ -176,6 +176,18 @@
       }
     },
     {
+      "id": "hierarchical_numeric",
+      "name": "层级数字编号",
+      "matcher_type": "hierarchical_numeric",
+      "target_level": "h1",
+      "enabled": true,
+      "priority": 45,
+      "params": {
+        "sample": "1 背景 / 1.1 现状 / 1.1.1 数据来源",
+        "start_level": "h1"
+      }
+    },
+    {
       "id": "arabic_comma",
       "name": "1、2、3、",
       "matcher_type": "arabic_comma",
